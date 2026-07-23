@@ -41,12 +41,13 @@ targets:
     default: true
     workspace:
       host: https://dbc-a2d384f2-d156.cloud.databricks.com
-      # OAuthログイン (`databricks auth login`) はデフォルトでログインしたアカウントの
-      # メールアドレスをプロファイル名にするため、同じhostに対して DEFAULT と
-      # <email> の2つのプロファイルが存在すると `multiple profiles matched` エラーになる。
-      # DEFAULT に固定することでこのバンドルは常に DEFAULT プロファイルを使う
-      # （各自の環境で `databricks auth login --host <host> --profile DEFAULT` を実行しておくこと）。
-      profile: DEFAULT
+      # ここに `profile:` を固定で書かない。CI/CD (cd.yml) はサービスプリンシパルの
+      # 環境変数 (DATABRICKS_HOST/CLIENT_ID/CLIENT_SECRET) で認証しており、
+      # workspace.profile を固定するとその env var ベースの認証より profile 指定が
+      # 優先され CI が壊れる可能性があるため。ローカルで同一 host に複数プロファイルが
+      # 存在し `multiple profiles matched` になる場合は、コマンド実行時に
+      # `--profile <name>` を渡すか `DATABRICKS_CONFIG_PROFILE=<name>` を
+      # 環境変数として設定して解決すること（README のセットアップ手順を参照）。
     variables:
       catalog: rag_data_platform
       schema: rag_dev
@@ -55,7 +56,7 @@ targets:
     mode: production
     workspace:
       host: https://dbc-a2d384f2-d156.cloud.databricks.com
-      profile: DEFAULT # 理由は dev target 側のコメント参照
+      # profile を固定しない理由は dev target 側のコメント参照
     variables:
       catalog: rag_data_platform
       schema: rag

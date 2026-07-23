@@ -32,6 +32,10 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          # BUNDLE_VAR_<変数名> は databricks.yml の variables.warehouse_id を上書きする
+          # Databricks Asset Bundles 公式の変数上書き機構。warehouse_id は機密情報ではないため
+          # secrets ではなく repository variable (vars) から渡す。
+          BUNDLE_VAR_warehouse_id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
         run: databricks bundle deploy -t ${{ github.event.inputs.target || 'dev' }}
 
       - name: Apply ABAC policies
@@ -39,4 +43,5 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          BUNDLE_VAR_warehouse_id: ${{ vars.DATABRICKS_WAREHOUSE_ID }}
         run: databricks bundle run rag_abac_policies_job -t ${{ github.event.inputs.target || 'dev' }}

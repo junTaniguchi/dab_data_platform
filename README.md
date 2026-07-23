@@ -81,31 +81,33 @@ dab_data_platform/
    ```
 
 2. Free Edition ワークスペースにプロファイルを設定する。**OAuthブラウザログイン（推奨）**を使う。
-   このバンドルは `databricks.yml` の各ターゲットで `workspace.profile: DEFAULT` を
-   明示的に指定しているため、**`--profile DEFAULT` を付けてログインすること**。
    ```
-   databricks auth login --host https://dbc-a2d384f2-d156.cloud.databricks.com --profile DEFAULT
+   databricks auth login --host https://dbc-a2d384f2-d156.cloud.databricks.com
    ```
    ブラウザが自動で開くので、Databricksアカウントでログイン・許可するとターミナル側で
    認証完了する。手動でトークンを発行・コピー・管理する必要がなく、有効期限が切れても
-   再度同じコマンドを実行するだけでよい。
-
-   > **注意**: `--profile` を付けずに `databricks auth login --host <host>` を実行すると、
-   > ログインしたアカウントのメールアドレスがプロファイル名になる。その状態で
-   > 別途 `[DEFAULT]` セクションが（例えば `databricks configure` を試した際に）
-   > 同じ host で存在していると、`multiple profiles matched` エラーになる。
-   > その場合は `~/.databrickscfg` を確認し、上記コマンドで `DEFAULT` に
-   > 上書きログインするか、不要な方のセクションを削除すること。
-
-   複数プロファイルを使い分けたい場合は、`databricks.yml` の `profile: DEFAULT` を
-   該当のプロファイル名に変更するか、コマンドに `-p <name>`
-   （または `DATABRICKS_CONFIG_PROFILE` 環境変数）を指定する。
+   再度同じコマンドを実行するだけでよい。プロファイル名はデフォルトでログインした
+   アカウントのメールアドレスになる（例: `you@example.com`）。
 
    設定内容は `~/.databrickscfg` に保存される。認証状態は以下で確認できる。
    ```
-   databricks auth describe --profile DEFAULT
+   databricks auth describe
    databricks current-user me
    ```
+
+   > **同じhostに複数プロファイルがあり `multiple profiles matched` エラーになる場合**
+   > （例えば以前 `databricks configure` を試して host だけの `[DEFAULT]` が残っている等）、
+   > `databricks.yml` 側は特定のプロファイル名を固定していない
+   > （CI/CDがサービスプリンシパルの環境変数認証を使うため、bundle設定にローカルの
+   > プロファイル名を書き込まない方針にしている）。実行時に以下のどちらかで解決すること。
+   > ```
+   > databricks bundle deploy -t dev --profile <使いたいプロファイル名>
+   > # または
+   > export DATABRICKS_CONFIG_PROFILE=<使いたいプロファイル名>
+   > ```
+   > 恒久的に1つに絞りたい場合は `~/.databrickscfg` を編集し、不要なプロファイルの
+   > セクションを削除するか `databricks auth login --host <host> --profile <名前>` で
+   > 上書きしてもよい。
 
    **代替: Personal Access Token（PAT）方式**
    `databricks configure --host <host>` を実行すると `Personal access token:` の入力を
@@ -115,8 +117,31 @@ dab_data_platform/
    PATには有効期限があり、失効すると再発行・差し替えが必要になるため、
    通常は上記のOAuthログインを推奨する。
 
-4. `databricks.yml` の `variables.warehouse_id` を、自分のワークスペースの SQL ウェアハウス ID
-   に置き換える（ABACポリシー適用ジョブと Genie Space が使用）。
+4. SQL ウェアハウス ID を確認し、環境変数として設定する（ABACポリシー適用ジョブが使用）。
+
+   **IDの確認方法**
+   ```
+   databricks warehouses list
+   ```
+   もしくはUIで 左サイドバー「SQL」→「SQL Warehouses」→ 対象のウェアハウスをクリックし、
+   URL末尾（`.../sql/warehouses/<ID>`）または「Connection details」タブの HTTP Path
+   （`/sql/1.0/warehouses/<ID>`）から確認する。Free Edition では既定で
+   `Serverless Starter Warehouse` が1つ用意されている。
+
+   **設定方法（`databricks.yml` を書き換えない）**
+   `variables.warehouse_id` は `default: ""` のままにしてあり、各自の環境で
+   Databricks Asset Bundles の公式な変数上書き機構である
+   **環境変数 `BUNDLE_VAR_<変数名>`** を使って値を注入する運用にしている
+   （ワークスペースごとに異なる値をリポジトリにコミットしないため）。
+   ```
+   export BUNDLE_VAR_warehouse_id=<確認したウェアハウスID>
+   ```
+   `~/.zshrc` 等に追記して恒久化してもよいし、単発なら
+   `databricks bundle deploy -t dev --var="warehouse_id=<ID>"` のように
+   `--var` オプションでも上書きできる（優先順位は `--var` > `BUNDLE_VAR_*` 環境変数 >
+   `targets.<target>.variables` > `variables` の `default`）。
+   GitHub Actions での設定方法は [CI/CD](#cicdgithub-actions) セクションを参照。
+
 5. governance/abac_policies.sql 内の `security-admins` / `dept-hr` 等のアカウントグループを
    事前に作成しておく（存在しない場合、ABACポリシーの `IS_ACCOUNT_GROUP_MEMBER` は単に false 扱い
    になり誰も一致しない）。
@@ -171,6 +196,15 @@ SQLウェアハウスの `CAN_USE` 等）を付与した上で、GitHubリポジ
 | `DATABRICKS_HOST`            | `https://dbc-a2d384f2-d156.cloud.databricks.com`                  |
 | `DATABRICKS_CLIENT_ID`       | サービスプリンシパルのクライアントID                              |
 | `DATABRICKS_CLIENT_SECRET`   | サービスプリンシパルのシークレット                                |
+
+`warehouse_id` はワークスペース固有の値ではあるが機密情報ではないため、Secret ではなく
+**Settings > Secrets and variables > Actions > Variables** タブに **repository variable**
+として登録し、ワークフロー内で `BUNDLE_VAR_warehouse_id` 環境変数として渡す
+（`databricks.yml` 側は書き換えない。詳細は [セットアップ手順](#セットアップ手順) 参照）。
+
+| Variable name            | 内容                                              |
+|----------------------------|---------------------------------------------------|
+| `DATABRICKS_WAREHOUSE_ID`   | `databricks warehouses list` で確認したウェアハウスID |
 
 ### 2. GitHub Environments（承認フロー・ブランチ保護）
 
