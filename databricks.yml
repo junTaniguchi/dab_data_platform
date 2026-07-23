@@ -16,15 +16,20 @@ bundle:
 # 本バンドルの構成では特別な engine 設定は不要。
 
 variables:
+  # 新規カタログをバンドルで作成しようとしたところ、Free Edition では
+  # `POST /unity-catalog/catalogs` に明示的な storage location が必要で
+  # （"Metastore storage root URL does not exist... provide a storage location"）、
+  # デフォルトストレージが自動適用されるのはUIからの作成に限られることが分かった。
+  # そのため新規カタログは作らず、Free Edition に既定で存在する管理カタログ
+  # `workspace` の配下にスキーマ/Volumeだけを作成する構成にしている
+  # （resources/rag_unity_catalog.yml 参照）。別のワークスペースを使う場合は
+  # 既存の適切なカタログ名にこの default を変更すること。
   catalog:
-    description: サンプルデータ・メダリオンテーブルを配置する Unity Catalog カタログ名
-    default: rag_data_platform
+    description: サンプルデータ・メダリオンテーブルを配置する既存の Unity Catalog カタログ名
+    default: workspace
   schema:
     description: Bronze/Silver/Gold テーブルを配置するスキーマ名
     default: rag
-  raw_volume_path:
-    description: サンプルドキュメント（生ファイル）を配置する UC Volume パス
-    default: /Volumes/${var.catalog}/${var.schema}/raw_documents
   warehouse_id:
     description: ABAC ポリシー適用 SQL タスク・Genie Space が使用する SQL ウェアハウス ID（各自の環境のIDに置き換える）
     default: ""
@@ -49,7 +54,6 @@ targets:
       # `--profile <name>` を渡すか `DATABRICKS_CONFIG_PROFILE=<name>` を
       # 環境変数として設定して解決すること（README のセットアップ手順を参照）。
     variables:
-      catalog: rag_data_platform
       schema: rag_dev
 
   prod:
@@ -58,7 +62,6 @@ targets:
       host: https://dbc-a2d384f2-d156.cloud.databricks.com
       # profile を固定しない理由は dev target 側のコメント参照
     variables:
-      catalog: rag_data_platform
       schema: rag
     run_as:
       user_name: ${workspace.current_user.userName}

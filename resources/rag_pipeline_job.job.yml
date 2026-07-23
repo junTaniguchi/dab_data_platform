@@ -16,12 +16,17 @@ resources:
           spark_python_task:
             python_file: ../src/rag_pipeline_etl/seed/seed_sample_data.py
             parameters:
-              - "--catalog"
-              - ${var.catalog}
-              - "--schema"
-              - ${var.schema}
+              # ${workspace.file_path} はバンドルのファイル同期ルート
+              # （例: /Workspace/Users/<user>/.bundle/<name>/<target>/files）。
+              # このスクリプトは __file__ から自己位置を逆算できない実行環境のため、
+              # サンプルデータのディレクトリを明示的に渡す。
+              - "--sample_data_dir"
+              - ${workspace.file_path}/sample_data/documents
               - "--volume_path"
-              - ${var.raw_volume_path}
+              # rag_pipeline_etl.pipeline.yml と同じ理由で、スキーマ名は
+              # var.schema ではなく resources.schemas.rag_schema.name
+              # （dev target では自動プレフィックス付き）を参照する。
+              - /Volumes/${var.catalog}/${resources.schemas.rag_schema.name}/raw_documents
           environment_key: default
 
         - task_key: run_rag_pipeline_etl
@@ -34,6 +39,10 @@ resources:
       environments:
         - environment_key: default
           spec:
-            client: "1"
+            # `client` は非推奨（"Use `environment_version` instead" と `databricks bundle
+            # schema` に明記されている）。当初 `client: "1"` にしていたところ
+            # `Invalid platform channel Client-1. Workspace doesn't support Client-1
+            # channel for REPL` でクラスタ起動自体に失敗したため environment_version に変更。
+            environment_version: "2"
             dependencies:
               - databricks-sdk>=0.40.0

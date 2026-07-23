@@ -4,8 +4,12 @@ resources:
   pipelines:
     rag_pipeline_etl:
       name: rag_pipeline_etl
+      # catalog は既存カタログ（既定 workspace）を指すだけなのでプレーンな変数参照でよいが、
+      # schema はこのバンドルの resources/rag_unity_catalog.yml が作成するため、
+      # リソース参照にして「スキーマ作成後にこのパイプラインを作成する」順序をバンドルの
+      # 依存グラフに乗せる。
       catalog: ${var.catalog}
-      schema: ${var.schema}
+      schema: ${resources.schemas.rag_schema.name}
       serverless: true
       photon: true
       channel: PREVIEW
@@ -17,8 +21,22 @@ resources:
             include: ../src/rag_pipeline_etl/transformations/**
 
       configuration:
-        raw_volume_path: ${var.raw_volume_path}
+        # dev target は `mode: development` のため、実際に作成されるスキーマ名は
+        # resources.schemas.rag_schema.name（dev_<user>_rag_dev のように自動で
+        # プレフィックスが付く）になる。これを var.schema のプレーンな値で組み立てると
+        # 実在しないスキーマ名のVolumeパスになり
+        # `NotFound: Schema 'workspace.rag_dev' does not exist.` で失敗するため、
+        # 必ずリソース参照経由で組み立てること。
+        raw_volume_path: /Volumes/${var.catalog}/${resources.schemas.rag_schema.name}/raw_documents
         pipeline.name: rag_pipeline_etl
+        # Lakeflow Direct Publishing の実行環境では各変換ファイルが
+        # `prepare_to_execute_user_notebook_in_isolated_pipeline_module(...)` 経由で
+        # 分離モジュールとして exec されるため `__file__` が定義されず、
+        # `sys.path.append(str(Path(__file__)...))` で src/rag_pipeline_etl/common を
+        # 解決しようとすると `NameError: name '__file__' is not defined` になる。
+        # そのため各変換ファイルからは spark.conf.get("rag_src_root") 経由でこの
+        # 絶対パスを取得し、sys.path に追加する。
+        rag_src_root: ${workspace.file_path}/src/rag_pipeline_etl
 
       # 失敗時にメール通知したい場合は、下記のように email_recipients に実際のメールアドレスを
       # 1件以上指定すること。空リストのままデプロイすると

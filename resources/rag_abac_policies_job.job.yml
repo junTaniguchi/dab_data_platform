@@ -14,4 +14,8 @@ resources:
               path: ../governance/abac_policies.sql
             parameters:
               catalog: ${var.catalog}
-              schema: ${var.schema}
+              # dev target は mode: development のため、実際に作成されるスキーマ名は
+              # resources.schemas.rag_schema.name（dev_<user>_rag_dev のように自動で
+              # プレフィックスが付く）になる。var.schema のプレーンな値を渡すと
+              # `[SCHEMA_NOT_FOUND] The schema workspace.rag_dev cannot be found` になる。
+              schema: ${resources.schemas.rag_schema.name}

@@ -10,9 +10,10 @@ Vector Search index の同期までを1つのバンドルで定義していま�
 ```
 dab_data_platform/
 ├── .github/workflows/                 # GitHub Actions（CI: test+validate, CD: bundle deploy）
-├── databricks.yml                     # DAB定義（engine: direct = Direct publishing mode）
+├── databricks.yml                     # DAB定義
 ├── pyproject.toml                     # 依存関係（pyspark, databricks-sdk, pytest 等）
 ├── resources/
+│   ├── rag_unity_catalog.yml          # スキーマ/Volumeの宣言的作成（既存カタログ配下）
 │   ├── rag_pipeline_etl.pipeline.yml  # Lakeflow SDP（bronze/silver/gold, STEP 01）
 │   ├── rag_pipeline_job.job.yml       # seed_sample_data -> ETL のスケジュール実行
 │   ├── rag_vector_search.yml          # vector_search_endpoints + indexes（STEP 02）
@@ -144,20 +145,39 @@ dab_data_platform/
 
 5. governance/abac_policies.sql 内の `security-admins` / `dept-hr` 等のアカウントグループを
    事前に作成しておく（存在しない場合、ABACポリシーの `IS_ACCOUNT_GROUP_MEMBER` は単に false 扱い
-   になり誰も一致しない）。
-6. バンドルをデプロイする。
+   になり誰も一致しない。未作成のままでもデプロイ自体は失敗しない）。
+
+6. バンドルをデプロイする。**初回はここで `vector_search_indexes` の作成だけ失敗する**
+   （Gold テーブルがまだ存在しないため。想定通りの動作なので無視してよい）。
    ```
    databricks bundle deploy -t dev
    ```
-7. サンプルデータ投入 + ETL実行。
+   ```
+   Error: cannot create resources.vector_search_indexes.rag_document_chunks_index:
+   Table 'workspace.<schema>.gold_document_chunks_for_search' does not exist.
+   ```
+
+7. サンプルデータ投入 + ETL実行（Bronze → Silver → Gold テーブルを実際に作成する）。
    ```
    databricks bundle run rag_pipeline_job -t dev
    ```
+   数分かかる（サーバーレスクラスタの起動込み）。完了後、もう一度デプロイすると
+   Gold テーブルが存在するようになるため Vector Search index の作成に進める。
+   ```
+   databricks bundle deploy -t dev
+   ```
+   `databricks vector-search-indexes get-index workspace.<schema>.rag_document_chunks_index`
+   で `"ready": true` になっていることを確認する（初回同期は数分かかることがある）。
+
 8. ABACポリシーの適用。
    ```
    databricks bundle run rag_abac_policies_job -t dev
    ```
-9. Vector Search index の同期状況を Databricks UI（Catalog Explorer > Vector Search）で確認する。
+   2回目以降にこのジョブを再実行する場合は、`governance/abac_policies.sql` 冒頭の
+   `CREATE GOVERNED TAG` 文をコメントアウトすること（後述の「既知の制約」セクション参照）。
+
+9. Vector Search index の同期状況を Databricks UI（Catalog Explorer > 該当スキーマ >
+   Vector Search）、またはCLIの `databricks vector-search-indexes get-index <index名>` で確認する。
 
 `rag_pipeline_job` の schedule は事故防止のため `pause_status: PAUSED` にしてあります。
 動作確認後、`resources/rag_pipeline_job.job.yml` を `UNPAUSED` に変更して再デプロイしてください。
@@ -234,27 +254,102 @@ SQLウェアハウスの `CAN_USE` 等）を付与した上で、GitHubリポジ
 - Databricks CLI のインストールに使っている `databricks/setup-cli@main` は公式Actionです。
   ピン留めしたい場合はタグ付きバージョンに固定してください。
 
-## 既知の制約・要確認事項（プレビュー機能に依存する部分）
+## 既知の制約・手動での対応が必要な部分
 
-このバンドルは 2026-07 時点の情報をもとに作成しており、以下はいずれもプレビュー/新機能で
-構文や挙動が変わりうるため、実際にデプロイする前に最新のドキュメントで確認してください。
+このバンドルは Databricks Free Edition のワークスペース（Databricks CLI v1.9.0）に対して
+**実際に `bundle deploy` / `bundle run` を最後まで実行し、Bronze→Silver→Gold→Vector Search→
+ABAC行フィルタが動作することを確認済み**です。以下は、その過程で判明した実際の制約と、
+コード側で対応済みの内容・利用者側で手動対応が必要な内容です。
 
-- **`ai_parse_document` / `ai_prep_search`**: 戻り値 struct のフィールド名は
-  `src/rag_pipeline_etl/explorations/sample_exploration.ipynb` で実際に確認し、
-  `silver_parsed_documents.py` の `PARSED_TEXT_EXPR` と
-  `stg_chunks_ai_prep_search.py` の `AI_PREP_SEARCH_EXPR` を必要に応じて調整してください。
-- **Unity Catalog ABAC（`CREATE POLICY`）**: `governance/abac_policies.sql` の構文はプレビュー版
-  ドキュメントに基づくベストエフォートの実装です。アカウントで ABAC の Public Preview が
-  有効になっていること、グループ名・列名が実環境と一致していることを確認してください。
-- **Vector Search リソース（`resources.vector_search_endpoints` / `vector_search_indexes`）**:
-  DABでの宣言的サポートもプレビュー段階のため、フィールド名はリリースノートで要確認です。
-  当初 `vector_search_indexes` に `depends_on` を書いていましたが、手元の Databricks CLI
-  v1.9.0 では `Warning: unknown field: depends_on` として認識されなかったため削除しました
-  （`endpoint_name` での参照により依存関係は自動解決されます）。同様に databricks.yml の
-  トップレベルにあった `engine: direct` も `Warning: unknown field: engine` となったため
-  削除済みです。CLIのバージョンによってサポートされるフィールドが異なるため、
-  `databricks bundle validate` の警告は都度確認してください。
-- サンプルデータは `.txt` のプレーンテキストです。`ai_parse_document` は本来 PDF / 画像 /
-  Office文書向けの機能なので、実際の非テキスト文書での動作確認は別途 volume に
-  PDF等を配置して行ってください（`bronze_documents.py` / `silver_parsed_documents.py` は
-  拡張子で分岐する実装になっています）。
+### コード側で対応済み（設計として理解しておくとよい点）
+
+- **`vector_search_indexes` は実テーブルを要求する**: 中間ビュー（`stg_chunks_*`）や Gold を
+  バッチ読み込み（`dp.read`）で作っていると、Lakeflow はテーブルを `MATERIALIZED_VIEW` として
+  作成する。Vector Search の delta_sync index は `DESCRIBE HISTORY` が使える実テーブル
+  （Change Data Feed対応）を要求するため、`MATERIALIZED_VIEW` だと
+  `[EXPECT_TABLE_NOT_VIEW.NO_ALTERNATIVE] ... expects a table but ... is a view` で
+  index の同期が失敗する。そのため `stg_chunks_ai_prep_search.py` / `stg_chunks_fixed_overlap.py` /
+  `gold_document_chunks_for_search.py` は upstream をすべて `dp.read_stream` にし、
+  `gold_document_chunks_for_search` が `STREAMING_TABLE`（実テーブル）になるようにしてある。
+  加えて、Vector Search は Change Data Feed も要求する
+  （`delta.enableChangeDataFeed = true` を `table_properties` に設定済み）。
+- **`vector_search_indexes.endpoint_name` はリソース参照にする**: `${var.xxx}` のような
+  ただの変数参照だと、値が同じでもバンドルの依存グラフには乗らず、endpoint 作成前に
+  index 作成が走って `AI Search endpoint ... not found (404)` になる。
+  `${resources.vector_search_endpoints.rag_vector_search_endpoint.name}` のような
+  **リソース参照**にすることで、CLI が正しい順序でデプロイするようにしてある
+  （`depends_on` フィールドはこのCLIバージョンでは未サポート）。
+- **UDF (`F.udf`) は使わない**: `common/` パッケージを `sys.path.append` して import した
+  純粋関数を `F.udf()` でラップして使うと、ドライバでは動いても executor 側で
+  `ModuleNotFoundError: No module named 'common.xxx'` になる（UDFのクロージャは
+  cloudpickle で別プロセスに転送されるため）。そのため chunk_id 生成・固定長チャンキングは
+  `F.sha2` / `sequence`+`substring` のようなネイティブ Spark SQL 式で実装している。
+  `common/` の同名関数は参照実装・単体テスト用として残している。
+- **`__file__` は使えない**: Lakeflow の変換ファイルは分離モジュールとして exec されるため
+  `__file__` が未定義。`spark.conf.get("rag_src_root")`
+  （`rag_pipeline_etl.pipeline.yml` の `configuration.rag_src_root` 経由）で代替している。
+  同じ理由で `seed_sample_data.py` も `--sample_data_dir` 引数
+  （`${workspace.file_path}/sample_data/documents`）でパスを受け取る設計にしてある。
+- **`input_file_name()` は Unity Catalog非対応**: `bronze_documents.py` では
+  `_metadata.file_path` の代わりに `binaryFile` フォーマットが持つ `path` 列をそのまま使う。
+- **spark_python_task の `environment_version`**: 旧 `client: "1"` は
+  `Invalid platform channel Client-1` でクラスタ起動に失敗したため `environment_version: "2"`
+  に変更済み。
+- **dev target の自動プレフィックス**: `mode: development` により、実際に作成される
+  スキーマ名には `dev_<user>_` が自動付与される（例: `rag_dev` → `dev_ultia0602_rag_dev`）。
+  `${var.schema}` のプレーンな値を使うと存在しないスキーマ名を参照してしまうため、
+  Volumeパスやジョブのパラメータでは必ず `${resources.schemas.rag_schema.name}`
+  （リソース参照）を使うようにしてある。
+- **カタログは新規作成しない**: Free Edition では `CREATE CATALOG` に明示的な
+  storage location が必要（"Metastore storage root URL does not exist... provide a
+  storage location"、UIからの作成でのみ Default Storage が自動適用される）。そのため
+  新規カタログは作らず、既定で存在する管理カタログ `workspace`
+  （`variables.catalog` の default）の配下にスキーマ・Volumeだけを作成する構成にしている。
+  別のワークスペース/カタログを使う場合は `variables.catalog` の default を変更すること。
+
+### 利用者側で手動対応が必要な部分
+
+- **`ai_parse_document` の戻り値**: `ai_parse_document(content)` は VARIANT を返し、
+  `document.pages` はそのVARIANT内のARRAYなので `variant_get(expr, path, 'ARRAY<VARIANT>')`
+  でキャストしてから `transform` する必要がある（`:` パス記法のままだと
+  `[DATATYPE_MISMATCH.UNEXPECTED_INPUT_TYPE]` になる）。またサンプルデータの `.txt` は
+  `ai_parse_document` 非対応で `"error_status":[{"error_message":"Unsupported file format:
+  unknown"}]` を返す（PDF/画像等でのみ意味のある結果が得られる）。実データで
+  `src/rag_pipeline_etl/explorations/sample_exploration.ipynb` を使って構造を確認し、
+  `silver_parsed_documents.py` の `PARSED_TEXT_EXPR` を必要に応じて調整すること。
+- **`ai_prep_search` は生テキストではなくパース済みVARIANTを期待する**: 実際に確認した
+  ところ、`ai_prep_search(<プレーン文字列>)` はエラーVARIANT
+  （`{"error_message":"The input content is invalid.","response":null}`）を返す。
+  `stg_chunks_ai_prep_search.py` は `silver_parsed_documents.parsed_text`（文字列）を
+  そのまま渡す実装のため、非対応フォーマットのサンプルデータでは常にチャンク0件になる
+  （型エラーにはならず安全に空配列になることは確認済み）。実運用でPDF等を使う場合は、
+  Silver側で `ai_parse_document` の結果（VARIANT）もそのまま保持してGold側に渡す設計に
+  変更したほうがよい可能性がある。
+- **Unity Catalog ABAC（`CREATE POLICY` / `CREATE GOVERNED TAG`）**: 実際に動作を確認した
+  正しい構文は当初の想定とかなり異なっていた。要点:
+  - governed tag のキー（`abac_dimension`）は**account レベルで事前登録が必要**
+    （`CREATE GOVERNED TAG <key> VALUES (...)`。UIからも作成可）。未登録のまま
+    `ALTER TABLE ... SET TAGS` すると `Unknown tag policy key` になる。
+  - `CREATE GOVERNED TAG` に `IF NOT EXISTS` は無く、既に存在すると
+    `ALREADY_EXISTS: Tag policy already exists` でジョブ全体が失敗するため、
+    **2回目以降の実行前に `governance/abac_policies.sql` 冒頭の
+    `CREATE GOVERNED TAG` 行をコメントアウトすること**。
+  - 1テーブルに ROW FILTER ポリシーは1つしかアタッチできない
+    （`UC_ABAC_MULTIPLE_ROW_FILTERS`）。classification / department の判定は
+    1つのUDF・1つのPOLICYにまとめてある。
+  - `CREATE POLICY ... ON SCHEMA <securable>` の `<securable>` 部分は `IDENTIFIER()`
+    非対応（`ALTER TABLE` 等とは異なる）。dev target のスキーマ名は動的
+    （`dev_<user>_...` プレフィックス）なので `EXECUTE IMMEDIATE` で動的SQLとして
+    実行している。埋め込む単一引用符は `''` ではなく `CHR(39)` を使うこと
+    （`''` はこの用途で正しく機能しないことを確認済み）。
+  - `security-admins` / `dept-hr` 等のアカウントグループが未作成の場合、
+    `IS_ACCOUNT_GROUP_MEMBER` は単に `false` を返すだけで、ジョブ自体は失敗しない
+    （＝管理者以外閲覧不可、というfail-closed側に倒れる）。
+- **Vector Search リソース宣言**: `resources.vector_search_endpoints` /
+  `resources.vector_search_indexes` は Free Edition でも実際に動作することを確認済み
+  （STANDARD endpoint、HYBRID index_subtype）。ただし初回の index 作成・同期には
+  数分〜十数分程度かかることがある（`ready: false` の間は
+  `"Delta sync index creation is pending endpoint provisioning."` 等のメッセージになる）。
+- サンプルデータは `.txt` のプレーンテキストです。実際の非テキスト文書（PDF等）での
+  動作確認は別途 Volume に配置して行ってください
+  （`bronze_documents.py` / `silver_parsed_documents.py` は拡張子で分岐する実装）。

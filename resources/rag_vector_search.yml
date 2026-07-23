@@ -18,12 +18,16 @@ resources:
 
   vector_search_indexes:
     rag_document_chunks_index:
-      name: ${var.catalog}.${var.schema}.rag_document_chunks_index
+      # schema 部分は ${var.schema} ではなくリソース参照にし、
+      # resources/rag_unity_catalog.yml のスキーマ作成後にこの index が
+      # 作成されるようにする（`Catalog 'xxx' does not exist` エラーの再発防止）。
+      # catalog は既存カタログを指すだけなのでプレーンな変数参照でよい。
+      name: ${var.catalog}.${resources.schemas.rag_schema.name}.rag_document_chunks_index
       endpoint_name: ${resources.vector_search_endpoints.rag_vector_search_endpoint.name}
       primary_key: chunk_id
       index_type: DELTA_SYNC
       delta_sync_index_spec:
-        source_table: ${var.catalog}.${var.schema}.gold_document_chunks_for_search
+        source_table: ${var.catalog}.${resources.schemas.rag_schema.name}.gold_document_chunks_for_search
         pipeline_type: TRIGGERED
         embedding_source_columns:
           - name: chunk_text

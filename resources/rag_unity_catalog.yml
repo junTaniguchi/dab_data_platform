@@ -1,0 +1,35 @@
+# 前提リソース: RAGメダリオン基盤が使う Unity Catalog のスキーマ/ボリュームをバンドルで管理する。
+#
+# 当初は新規カタログ（rag_data_platform）自体もこのバンドルで作成しようとしたが、
+# Free Edition では `POST /unity-catalog/catalogs` に明示的な storage location が必要で
+# （"Metastore storage root URL does not exist... provide a storage location for the
+# catalog"）、デフォルトストレージが自動適用されるのはワークスペースUIからの作成に限られる
+# ことが実際のデプロイで判明した。そのため新規カタログは作らず、Free Edition に既定で
+# 存在する管理カタログ `workspace`（databricks.yml の variables.catalog の default）配下に
+# スキーマと Volume だけを作成する構成にしている。
+#
+# スキーマ/Volumeは Databricks CLI がサポートするバンドルリソースタイプ
+# （`databricks bundle schema` で確認済み）で、既存カタログの配下であれば
+# 追加のストレージ位置指定なしで作成できることを実際に確認済み。
+#
+# 他のリソース（pipeline の schema、vector_search_indexes の schema部分）は
+# `${var.schema}` ではなく、必ずこのファイルの `${resources.schemas.rag_schema.name}` を
+# 参照すること。単なる変数参照だと値が同じでもバンドルの依存グラフには乗らず、
+# スキーマが存在する前に他リソースの作成が走ってしまう
+# （vector_search_indexes の endpoint_name で実際に遭遇した問題と同種）。
+# catalog 部分は既存カタログを指すだけで本バンドルが作成するわけではないため、
+# 素直に `${var.catalog}` を使ってよい。
+resources:
+  schemas:
+    rag_schema:
+      name: ${var.schema}
+      catalog_name: ${var.catalog}
+      comment: Bronze/Silver/Gold テーブルおよび Vector Search index を配置するスキーマ
+
+  volumes:
+    raw_documents_volume:
+      name: raw_documents
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.rag_schema.name}
+      volume_type: MANAGED
+      comment: サンプルドキュメント（生ファイル）を配置する Volume。seed_sample_data.py がここへアップロードする。
