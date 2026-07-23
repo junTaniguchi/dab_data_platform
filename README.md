@@ -80,17 +80,31 @@ dab_data_platform/
    brew upgrade databricks
    ```
 
-2. Free Edition ワークスペースにプロファイルを設定する（ブラウザが開き OAuth でログインする）。
+2. Free Edition ワークスペースにプロファイルを設定する。**OAuthブラウザログイン（推奨）**を使う。
    ```
-   databricks configure --host https://dbc-a2d384f2-d156.cloud.databricks.com
+   databricks auth login --host https://dbc-a2d384f2-d156.cloud.databricks.com
    ```
-   複数プロファイルを使い分ける場合は `--profile <name>` を付け、以降のコマンドにも
-   `-p <name>`（または `DATABRICKS_CONFIG_PROFILE` 環境変数）を指定する。
+   プロファイル名を聞かれたら Enter でデフォルトのままでも、任意の名前（例: `dab-free-edition`）
+   でもよい。ブラウザが自動で開くので、Databricksアカウントでログイン・許可すると
+   ターミナル側で認証完了する。手動でトークンを発行・コピー・管理する必要がなく、
+   有効期限が切れても再度 `databricks auth login` を実行するだけでよい。
+
+   複数プロファイルを使い分ける場合は、以降のコマンドに `-p <name>`
+   （または `DATABRICKS_CONFIG_PROFILE` 環境変数）を指定する。
 
    設定内容は `~/.databrickscfg` に保存される。認証状態は以下で確認できる。
    ```
    databricks auth describe
+   databricks current-user me
    ```
+
+   **代替: Personal Access Token（PAT）方式**
+   `databricks configure --host <host>` を実行すると `Personal access token:` の入力を
+   求められる。この場合はワークスペースUI（右上のユーザーアイコン → Settings →
+   Developer タブ → Access tokens → Generate new token）で発行したトークン文字列を
+   貼り付ける。トークンは発行時にしか表示されないため、その場でコピーしておくこと。
+   PATには有効期限があり、失効すると再発行・差し替えが必要になるため、
+   通常は上記のOAuthログインを推奨する。
 
 4. `databricks.yml` の `variables.warehouse_id` を、自分のワークスペースの SQL ウェアハウス ID
    に置き換える（ABACポリシー適用ジョブと Genie Space が使用）。
