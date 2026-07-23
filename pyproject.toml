@@ -1,0 +1,26 @@
+[project]
+name = "rag-pipeline-etl"
+version = "0.1.0"
+description = "RAG向けメダリオン基盤（Bronze/Silver/Gold, ABAC, Vector Search）の Lakeflow Declarative Pipelines 実装"
+requires-python = ">=3.10"
+dependencies = [
+    "databricks-sdk>=0.40.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pyspark>=3.5.0",
+    "pytest>=8.0.0",
+    "chispa>=0.10.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src/rag_pipeline_etl"]
+markers = [
+    "integration: requires a deployed Databricks workspace (see tests/integration/test_pipeline_e2e.py)",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

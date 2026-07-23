@@ -1,0 +1,55 @@
+# dab_data_platform — RAG向けメダリオン基盤（Bronze/Silver/Gold + Vector Search + ABAC）
+#
+# Databricks Free Edition (workspace: dbc-a2d384f2-d156) 向けに作成した Databricks Asset Bundle。
+# STEP 01: Lakeflow Declarative Pipelines による Bronze/Silver/Gold ETL + ABAC ポリシー適用
+# STEP 02: Vector Search endpoint / index のバンドル宣言
+# STEP 05: Genie Space から参照する集計ビュー
+bundle:
+  name: dab_data_platform
+
+# "engine: direct" は Lakeflow Declarative Pipelines の Direct publishing mode を有効化する設定。
+# Direct publishing mode ではパイプライン内の各テーブルが自身の完全修飾名 (catalog.schema.table) を
+# 個別に持てるため、同一バンドル内で Vector Search の vector_search_indexes リソースが
+# パイプライン管理下の Gold テーブルを source_table として直接参照できるようになる。
+# 2026-07時点ではプレビュー機能のため、実行前に最新のリリースノートで構文/挙動を確認すること。
+engine: direct
+
+variables:
+  catalog:
+    description: サンプルデータ・メダリオンテーブルを配置する Unity Catalog カタログ名
+    default: rag_data_platform
+  schema:
+    description: Bronze/Silver/Gold テーブルを配置するスキーマ名
+    default: rag
+  raw_volume_path:
+    description: サンプルドキュメント（生ファイル）を配置する UC Volume パス
+    default: /Volumes/${var.catalog}/${var.schema}/raw_documents
+  warehouse_id:
+    description: ABAC ポリシー適用 SQL タスク・Genie Space が使用する SQL ウェアハウス ID（各自の環境のIDに置き換える）
+    default: ""
+  vector_search_endpoint:
+    description: Vector Search endpoint 名
+    default: rag_vector_search_endpoint
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-a2d384f2-d156.cloud.databricks.com
+    variables:
+      catalog: rag_data_platform
+      schema: rag_dev
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-a2d384f2-d156.cloud.databricks.com
+    variables:
+      catalog: rag_data_platform
+      schema: rag
+    run_as:
+      user_name: ${workspace.current_user.userName}

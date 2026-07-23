@@ -1,0 +1,39 @@
+# rag_pipeline_etl の定期実行用ジョブ
+# 1. サンプルデータを UC Volume へ配置（初回/再セットアップ用途、既存ファイルはスキップ）
+# 2. Lakeflow パイプライン（Bronze -> Silver -> Gold）を実行
+resources:
+  jobs:
+    rag_pipeline_job:
+      name: rag_pipeline_job
+
+      schedule:
+        quartz_cron_expression: "0 0 3 * * ?" # 毎日 03:00 に実行
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED # 初回デプロイ後、動作確認できたら UNPAUSED に変更する
+
+      tasks:
+        - task_key: seed_sample_data
+          spark_python_task:
+            python_file: ../src/rag_pipeline_etl/seed/seed_sample_data.py
+            parameters:
+              - "--catalog"
+              - ${var.catalog}
+              - "--schema"
+              - ${var.schema}
+              - "--volume_path"
+              - ${var.raw_volume_path}
+          environment_key: default
+
+        - task_key: run_rag_pipeline_etl
+          depends_on:
+            - task_key: seed_sample_data
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.rag_pipeline_etl.id}
+            full_refresh: false
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "1"
+            dependencies:
+              - databricks-sdk>=0.40.0

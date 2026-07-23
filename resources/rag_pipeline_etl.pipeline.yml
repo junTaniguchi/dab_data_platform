@@ -1,0 +1,26 @@
+# Lakeflow Declarative Pipelines（旧称 DLT）による Bronze/Silver/Gold ETL 定義
+# STEP 01: ドキュメント取り込み → ai_parse_document → 2系統チャンキング → ABAC属性列付きGold統合
+resources:
+  pipelines:
+    rag_pipeline_etl:
+      name: rag_pipeline_etl
+      catalog: ${var.catalog}
+      schema: ${var.schema}
+      serverless: true
+      photon: true
+      channel: PREVIEW
+      development: true
+      continuous: false
+
+      libraries:
+        - glob:
+            include: ../src/rag_pipeline_etl/transformations/**
+
+      configuration:
+        raw_volume_path: ${var.raw_volume_path}
+        pipeline.name: rag_pipeline_etl
+
+      notifications:
+        - alerts:
+            - on-update-failure
+          email_recipients: []

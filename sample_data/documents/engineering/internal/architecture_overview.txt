@@ -1,0 +1,21 @@
+# RAGデータ基盤 アーキテクチャ概要（社内限定）
+
+本ドキュメントは Acme Analytics の RAG（Retrieval-Augmented Generation）データ基盤の
+アーキテクチャ概要をまとめたものである。classification は internal。
+
+## 1. 全体構成
+- Bronze: UC Volume 上の生ドキュメント（PDF/画像/テキスト）を Auto Loader で取り込み
+- Silver: ai_parse_document 等によるテキスト抽出・正規化
+- Gold: 2系統のチャンキング（ai_prep_search / 固定長オーバーラップ）を統合し、
+  ABAC判定用の department / classification 属性列を付与
+- Vector Search: Gold テーブルを source とした delta_sync インデックスによる埋め込み同期
+
+## 2. ガバナンス
+Unity Catalog の governed tags と ABAC（CREATE POLICY）により、
+department・classification に基づく行レベルのアクセス制御を実現する。
+検索結果自体もこのポリシーの対象となるため、権限のないユーザーには
+そもそも該当チャンクが検索結果に現れない。
+
+## 3. 今後の拡張予定
+- Genie Space によるビジネスユーザー向け自然言語分析（チャンク集計ビューを利用）
+- 増分同期の最適化（Auto Loader のチェックポイント活用）

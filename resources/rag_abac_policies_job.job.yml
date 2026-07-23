@@ -1,0 +1,17 @@
+# governance/abac_policies.sql を SQL ウェアハウス上で適用するジョブ
+# governed tags 付与 + ABAC 行フィルタポリシー (CREATE POLICY) を適用する。
+# ETL ジョブとは独立して、ガバナンス定義を変更した際に手動/CI から再実行する想定。
+resources:
+  jobs:
+    rag_abac_policies_job:
+      name: rag_abac_policies_job
+
+      tasks:
+        - task_key: apply_abac_policies
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../governance/abac_policies.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
