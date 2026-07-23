@@ -56,28 +56,60 @@ dab_data_platform/
 
 ## セットアップ手順
 
-1. Databricks CLI をインストールし、Free Edition ワークスペースにプロファイルを設定する。
+1. Databricks CLI をインストールする（Mac）。
+
+   Homebrew を使う方法（推奨）。
+   ```
+   brew tap databricks/tap
+   brew install databricks
+   ```
+
+   Homebrew を使わない場合は公式インストールスクリプトでも可。
+   ```
+   curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+   ```
+
+   インストール後、バージョンを確認する（0.230系以降を推奨。DAB / Lakeflow / Vector Search
+   関連の新しいリソース定義を扱うため、古いバージョンだと構文が認識されないことがある）。
+   ```
+   databricks -v
+   ```
+
+   既に古いバージョンが入っている場合は Homebrew ならアップグレードする。
+   ```
+   brew upgrade databricks
+   ```
+
+2. Free Edition ワークスペースにプロファイルを設定する（ブラウザが開き OAuth でログインする）。
    ```
    databricks configure --host https://dbc-a2d384f2-d156.cloud.databricks.com
    ```
-2. `databricks.yml` の `variables.warehouse_id` を、自分のワークスペースの SQL ウェアハウス ID
+   複数プロファイルを使い分ける場合は `--profile <name>` を付け、以降のコマンドにも
+   `-p <name>`（または `DATABRICKS_CONFIG_PROFILE` 環境変数）を指定する。
+
+   設定内容は `~/.databrickscfg` に保存される。認証状態は以下で確認できる。
+   ```
+   databricks auth describe
+   ```
+
+4. `databricks.yml` の `variables.warehouse_id` を、自分のワークスペースの SQL ウェアハウス ID
    に置き換える（ABACポリシー適用ジョブと Genie Space が使用）。
-3. governance/abac_policies.sql 内の `security-admins` / `dept-hr` 等のアカウントグループを
+5. governance/abac_policies.sql 内の `security-admins` / `dept-hr` 等のアカウントグループを
    事前に作成しておく（存在しない場合、ABACポリシーの `IS_ACCOUNT_GROUP_MEMBER` は単に false 扱い
    になり誰も一致しない）。
-4. バンドルをデプロイする。
+6. バンドルをデプロイする。
    ```
    databricks bundle deploy -t dev
    ```
-5. サンプルデータ投入 + ETL実行。
+7. サンプルデータ投入 + ETL実行。
    ```
    databricks bundle run rag_pipeline_job -t dev
    ```
-6. ABACポリシーの適用。
+8. ABACポリシーの適用。
    ```
    databricks bundle run rag_abac_policies_job -t dev
    ```
-7. Vector Search index の同期状況を Databricks UI（Catalog Explorer > Vector Search）で確認する。
+9. Vector Search index の同期状況を Databricks UI（Catalog Explorer > Vector Search）で確認する。
 
 `rag_pipeline_job` の schedule は事故防止のため `pause_status: PAUSED` にしてあります。
 動作確認後、`resources/rag_pipeline_job.job.yml` を `UNPAUSED` に変更して再デプロイしてください。
