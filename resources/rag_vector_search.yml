@@ -1,9 +1,15 @@
 # STEP 02: Vector Search endpoint / index のバンドル宣言
 # gold_document_chunks_for_search を source_table として delta_sync 方式で同期する。
-# endpoint_name で vector_search_endpoints.rag_vector_search_endpoint を参照しているため、
-# 明示的な depends_on がなくてもバンドル側で依存関係が解決される
-#（手元の Databricks CLI v1.9.0 では vector_search_indexes.depends_on は
-#  `Warning: unknown field: depends_on` として認識されないため削除した）。
+#
+# endpoint_name は `${resources.vector_search_endpoints.rag_vector_search_endpoint.name}`
+# という「リソース参照」にすること。ここを単に同じ変数 `${var.vector_search_endpoint}` を
+# 双方に書くだけだと、値がたまたま一致するだけでバンドルの依存グラフには乗らず、
+# デプロイ順序が保証されない。実際に endpoint_name を var 参照のままにしたところ、
+# `AI Search endpoint rag_vector_search_endpoint not found (404)` で index の作成に失敗した
+# （endpoint がまだ存在しない状態で index 作成APIが呼ばれたため）。
+# リソース参照にすることで CLI が自動的に endpoint -> index の順にデプロイする。
+# （手元の Databricks CLI v1.9.0 では vector_search_indexes.depends_on フィールドは
+#  `Warning: unknown field: depends_on` として認識されないため使わない）。
 resources:
   vector_search_endpoints:
     rag_vector_search_endpoint:
@@ -13,7 +19,7 @@ resources:
   vector_search_indexes:
     rag_document_chunks_index:
       name: ${var.catalog}.${var.schema}.rag_document_chunks_index
-      endpoint_name: ${var.vector_search_endpoint}
+      endpoint_name: ${resources.vector_search_endpoints.rag_vector_search_endpoint.name}
       primary_key: chunk_id
       index_type: DELTA_SYNC
       delta_sync_index_spec:

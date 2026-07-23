@@ -20,7 +20,12 @@ resources:
         raw_volume_path: ${var.raw_volume_path}
         pipeline.name: rag_pipeline_etl
 
-      notifications:
-        - alerts:
-            - on-update-failure
-          email_recipients: []
+      # 失敗時にメール通知したい場合は、下記のように email_recipients に実際のメールアドレスを
+      # 1件以上指定すること。空リストのままデプロイすると
+      # `INVALID_PARAMETER_VALUE: Please specify at least one recipient and one alert` で
+      # デプロイ自体が失敗するため、既定では notifications ブロックを外している。
+      # notifications:
+      #   - alerts:
+      #       - on-update-failure
+      #     email_recipients:
+      #       - you@example.com
