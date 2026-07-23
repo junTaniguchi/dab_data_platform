@@ -1,7 +1,9 @@
 # STEP 02: Vector Search endpoint / index のバンドル宣言
 # gold_document_chunks_for_search を source_table として delta_sync 方式で同期する。
-# databricks.yml の `engine: direct` により、rag_pipeline_etl パイプラインが管理する
-# Gold テーブルをこの index からそのまま参照できる。
+# endpoint_name で vector_search_endpoints.rag_vector_search_endpoint を参照しているため、
+# 明示的な depends_on がなくてもバンドル側で依存関係が解決される
+#（手元の Databricks CLI v1.9.0 では vector_search_indexes.depends_on は
+#  `Warning: unknown field: depends_on` として認識されないため削除した）。
 resources:
   vector_search_endpoints:
     rag_vector_search_endpoint:
@@ -20,5 +22,3 @@ resources:
         embedding_source_columns:
           - name: chunk_text
             embedding_model_endpoint_name: databricks-gte-large-en
-      depends_on:
-        - vector_search_endpoints.rag_vector_search_endpoint

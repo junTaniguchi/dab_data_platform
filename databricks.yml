@@ -7,12 +7,13 @@
 bundle:
   name: dab_data_platform
 
-# "engine: direct" は Lakeflow Declarative Pipelines の Direct publishing mode を有効化する設定。
-# Direct publishing mode ではパイプライン内の各テーブルが自身の完全修飾名 (catalog.schema.table) を
-# 個別に持てるため、同一バンドル内で Vector Search の vector_search_indexes リソースが
-# パイプライン管理下の Gold テーブルを source_table として直接参照できるようになる。
-# 2026-07時点ではプレビュー機能のため、実行前に最新のリリースノートで構文/挙動を確認すること。
-engine: direct
+# 当初 "engine: direct" (Lakeflow Declarative Pipelines の Direct publishing mode を
+# 有効化する想定のフィールド) を置いていたが、手元の Databricks CLI v1.9.0 では
+# `Warning: unknown field: engine` として認識されず、バンドルのトップレベルフィールドとしては
+# 存在しないことを確認したため削除した。Gold テーブルは resources/rag_pipeline_etl.pipeline.yml
+# の catalog/schema 設定どおりのスキーマに作成され、Vector Search index はそのテーブルを
+# 完全修飾名（var.catalog.var.schema.gold_document_chunks_for_search）で参照するだけなので、
+# 本バンドルの構成では特別な engine 設定は不要。
 
 variables:
   catalog:
@@ -40,6 +41,12 @@ targets:
     default: true
     workspace:
       host: https://dbc-a2d384f2-d156.cloud.databricks.com
+      # OAuthログイン (`databricks auth login`) はデフォルトでログインしたアカウントの
+      # メールアドレスをプロファイル名にするため、同じhostに対して DEFAULT と
+      # <email> の2つのプロファイルが存在すると `multiple profiles matched` エラーになる。
+      # DEFAULT に固定することでこのバンドルは常に DEFAULT プロファイルを使う
+      # （各自の環境で `databricks auth login --host <host> --profile DEFAULT` を実行しておくこと）。
+      profile: DEFAULT
     variables:
       catalog: rag_data_platform
       schema: rag_dev
@@ -48,6 +55,7 @@ targets:
     mode: production
     workspace:
       host: https://dbc-a2d384f2-d156.cloud.databricks.com
+      profile: DEFAULT # 理由は dev target 側のコメント参照
     variables:
       catalog: rag_data_platform
       schema: rag

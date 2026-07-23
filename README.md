@@ -81,20 +81,29 @@ dab_data_platform/
    ```
 
 2. Free Edition ワークスペースにプロファイルを設定する。**OAuthブラウザログイン（推奨）**を使う。
+   このバンドルは `databricks.yml` の各ターゲットで `workspace.profile: DEFAULT` を
+   明示的に指定しているため、**`--profile DEFAULT` を付けてログインすること**。
    ```
-   databricks auth login --host https://dbc-a2d384f2-d156.cloud.databricks.com
+   databricks auth login --host https://dbc-a2d384f2-d156.cloud.databricks.com --profile DEFAULT
    ```
-   プロファイル名を聞かれたら Enter でデフォルトのままでも、任意の名前（例: `dab-free-edition`）
-   でもよい。ブラウザが自動で開くので、Databricksアカウントでログイン・許可すると
-   ターミナル側で認証完了する。手動でトークンを発行・コピー・管理する必要がなく、
-   有効期限が切れても再度 `databricks auth login` を実行するだけでよい。
+   ブラウザが自動で開くので、Databricksアカウントでログイン・許可するとターミナル側で
+   認証完了する。手動でトークンを発行・コピー・管理する必要がなく、有効期限が切れても
+   再度同じコマンドを実行するだけでよい。
 
-   複数プロファイルを使い分ける場合は、以降のコマンドに `-p <name>`
+   > **注意**: `--profile` を付けずに `databricks auth login --host <host>` を実行すると、
+   > ログインしたアカウントのメールアドレスがプロファイル名になる。その状態で
+   > 別途 `[DEFAULT]` セクションが（例えば `databricks configure` を試した際に）
+   > 同じ host で存在していると、`multiple profiles matched` エラーになる。
+   > その場合は `~/.databrickscfg` を確認し、上記コマンドで `DEFAULT` に
+   > 上書きログインするか、不要な方のセクションを削除すること。
+
+   複数プロファイルを使い分けたい場合は、`databricks.yml` の `profile: DEFAULT` を
+   該当のプロファイル名に変更するか、コマンドに `-p <name>`
    （または `DATABRICKS_CONFIG_PROFILE` 環境変数）を指定する。
 
    設定内容は `~/.databrickscfg` に保存される。認証状態は以下で確認できる。
    ```
-   databricks auth describe
+   databricks auth describe --profile DEFAULT
    databricks current-user me
    ```
 
@@ -196,8 +205,6 @@ SQLウェアハウスの `CAN_USE` 等）を付与した上で、GitHubリポジ
 このバンドルは 2026-07 時点の情報をもとに作成しており、以下はいずれもプレビュー/新機能で
 構文や挙動が変わりうるため、実際にデプロイする前に最新のドキュメントで確認してください。
 
-- **`engine: direct`**（databricks.yml）: Lakeflow Declarative Pipelines の Direct publishing
-  mode を有効化する設定として記載していますが、フィールド名・配置場所は要検証です。
 - **`ai_parse_document` / `ai_prep_search`**: 戻り値 struct のフィールド名は
   `src/rag_pipeline_etl/explorations/sample_exploration.ipynb` で実際に確認し、
   `silver_parsed_documents.py` の `PARSED_TEXT_EXPR` と
@@ -207,6 +214,12 @@ SQLウェアハウスの `CAN_USE` 等）を付与した上で、GitHubリポジ
   有効になっていること、グループ名・列名が実環境と一致していることを確認してください。
 - **Vector Search リソース（`resources.vector_search_endpoints` / `vector_search_indexes`）**:
   DABでの宣言的サポートもプレビュー段階のため、フィールド名はリリースノートで要確認です。
+  当初 `vector_search_indexes` に `depends_on` を書いていましたが、手元の Databricks CLI
+  v1.9.0 では `Warning: unknown field: depends_on` として認識されなかったため削除しました
+  （`endpoint_name` での参照により依存関係は自動解決されます）。同様に databricks.yml の
+  トップレベルにあった `engine: direct` も `Warning: unknown field: engine` となったため
+  削除済みです。CLIのバージョンによってサポートされるフィールドが異なるため、
+  `databricks bundle validate` の警告は都度確認してください。
 - サンプルデータは `.txt` のプレーンテキストです。`ai_parse_document` は本来 PDF / 画像 /
   Office文書向けの機能なので、実際の非テキスト文書での動作確認は別途 volume に
   PDF等を配置して行ってください（`bronze_documents.py` / `silver_parsed_documents.py` は
