@@ -47,33 +47,187 @@ EXECUTE IMMEDIATE
 --    governed tag（事前account登録が必要・値のホワイトリストを強制できる）は
 --    ここでは使わない。値の一覧を強制する必要が無い、単なる分類・検索用の
 --    メタデータなので、事前登録不要な plain tag（SET TAGS）で十分。
+--
+--    テーブル単位で以下6種類を可能な限り付与する（該当しないものは省略）。
+--      - domain          : 業務ドメイン（本パイプラインは一貫して 'sales'）
+--      - source_system   : データ出自システム（customers系='crm', orders系='pos'。
+--                          Bronzeで確定した値を Silver/Gold にもそのまま引き継ぐ
+--                          ＝「このテーブルの行は突き詰めるとどこから来たか」を
+--                          レイヤーを跨いで即座に追跡できるようにするため）
+--      - business_owner  : 業務オーナー（ETL系='data-engineering',
+--                          BI/分析寄りのGold集計='sales-ops'）
+--      - confidentiality : 機密度。生PIIを保持するほど・監査前の生データほど
+--                          高くする（restricted > confidential > internal）
+--      - regulation      : 適用法規。個人情報を含む/そこから派生した列がある
+--                          テーブルには 'appi'（個人情報保護法）、
+--                          決済カード情報（ハッシュ化済みでも）を含むテーブルには
+--                          'pci_dss' を付与する（複数該当する場合はカンマ区切り）
+--    さらに列単位で pii タグを付与し、「どの列にどの種類の個人情報が
+--    入っているか」を列レベルで検索・棚卸しできるようにする（値は
+--    「識別子の種類（未加工か仮名化済みかを含む）」を表す）。
+--
+--    【実機で遭遇した落とし穴】 `ALTER TABLE IDENTIFIER(:catalog || '.' || :schema
+--    || '.テーブル名') SET TAGS ('k1'='v1', 'k2'='v2', ...)` のように、動的に組み立てた
+--    IDENTIFIER(...) と複数キーの SET TAGS を組み合わせると
+--    `[PARSE_SYNTAX_ERROR] Syntax error at or near 'TAGS'` になることを実機で確認した
+--    （ALTER TABLE ... ALTER COLUMN ... SET TAGS の列単位の形では発生しない。
+--    テーブル単位の SET TAGS 特有の構文上の制約と考えられる）。そのため本セクションの
+--    テーブル単位の SET TAGS だけは、ファイル冒頭の USE CATALOG/USE SCHEMA が
+--    設定済みであることを利用し、IDENTIFIER()を使わずテーブル名のみで参照する。
 -- ============================================================================
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.bronze_customers')
-  SET TAGS ('domain' = 'sales', 'source_system' = 'crm', 'business_owner' = 'data-engineering');
 
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.bronze_orders')
-  SET TAGS ('domain' = 'sales', 'source_system' = 'pos', 'business_owner' = 'data-engineering', 'confidentiality' = 'restricted');
+-- --- Bronze: customers（未加工の直接PIIを保持する最も機密度が高いテーブル） ---
+ALTER TABLE bronze_customers
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'crm',
+    'business_owner' = 'data-engineering',
+    'confidentiality' = 'restricted',
+    'regulation' = 'appi'
+  );
 
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.silver_customers')
-  SET TAGS ('domain' = 'sales', 'confidentiality' = 'confidential', 'regulation' = 'apppi', 'business_owner' = 'data-engineering');
+ALTER TABLE bronze_customers
+  ALTER COLUMN name SET TAGS ('pii' = 'name');
+ALTER TABLE bronze_customers
+  ALTER COLUMN email SET TAGS ('pii' = 'email');
+ALTER TABLE bronze_customers
+  ALTER COLUMN phone SET TAGS ('pii' = 'phone');
+ALTER TABLE bronze_customers
+  ALTER COLUMN address SET TAGS ('pii' = 'address');
+ALTER TABLE bronze_customers
+  ALTER COLUMN birth_date SET TAGS ('pii' = 'birth_date');
 
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.silver_customers')
+-- --- Bronze: orders（決済カード情報は取り込み時点でハッシュ化済みだが、
+--     ハッシュ値・下4桁自体も PCI-DSS の管理対象であり続けるため regulation を付与） ---
+ALTER TABLE bronze_orders
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'pos',
+    'business_owner' = 'data-engineering',
+    'confidentiality' = 'restricted',
+    'regulation' = 'appi,pci_dss'
+  );
+
+ALTER TABLE bronze_orders
+  ALTER COLUMN customer_id SET TAGS ('pii' = 'customer_id');
+ALTER TABLE bronze_orders
+  ALTER COLUMN payment_card_last4 SET TAGS ('pii' = 'payment_card_partial');
+ALTER TABLE bronze_orders
+  ALTER COLUMN payment_card_hash SET TAGS ('pii' = 'payment_card_hashed');
+
+-- --- Silver: customers（email/phone/birth_date/addressは匿名化済みだが、
+--     name はそのまま引き継いでいるため直接PIIとして扱う） ---
+ALTER TABLE silver_customers
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'crm',
+    'confidentiality' = 'confidential',
+    'regulation' = 'appi',
+    'business_owner' = 'data-engineering'
+  );
+
+ALTER TABLE silver_customers
+  ALTER COLUMN customer_id SET TAGS ('pii' = 'customer_id');
+ALTER TABLE silver_customers
+  ALTER COLUMN name SET TAGS ('pii' = 'name');
+ALTER TABLE silver_customers
   ALTER COLUMN email_hash SET TAGS ('pii' = 'email_hashed');
-
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.silver_customers')
+ALTER TABLE silver_customers
   ALTER COLUMN phone_masked SET TAGS ('pii' = 'phone_masked');
+ALTER TABLE silver_customers
+  ALTER COLUMN birth_year SET TAGS ('pii' = 'birth_year_generalized');
+ALTER TABLE silver_customers
+  ALTER COLUMN address_region SET TAGS ('pii' = 'address_generalized');
 
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.silver_orders')
-  SET TAGS ('domain' = 'sales', 'confidentiality' = 'internal', 'business_owner' = 'data-engineering');
+-- --- Silver: orders（bronze_ordersの列をそのまま引き継ぐため、
+--     customer_id・カード関連列は同様にPII扱い） ---
+ALTER TABLE silver_orders
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'pos',
+    'confidentiality' = 'internal',
+    'regulation' = 'appi,pci_dss',
+    'business_owner' = 'data-engineering'
+  );
 
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.silver_orders_quarantine')
-  SET TAGS ('domain' = 'sales', 'confidentiality' = 'internal', 'business_owner' = 'data-engineering');
+ALTER TABLE silver_orders
+  ALTER COLUMN customer_id SET TAGS ('pii' = 'customer_id');
+ALTER TABLE silver_orders
+  ALTER COLUMN payment_card_last4 SET TAGS ('pii' = 'payment_card_partial');
+ALTER TABLE silver_orders
+  ALTER COLUMN payment_card_hash SET TAGS ('pii' = 'payment_card_hashed');
 
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.gold_daily_sales_by_region')
-  SET TAGS ('domain' = 'sales', 'confidentiality' = 'internal', 'business_owner' = 'sales-ops');
+-- --- Silver: orders_quarantine（是正前の生の違反行を保持するため、
+--     confidentialityはsilver_ordersより一段階高い'restricted'にする） ---
+ALTER TABLE silver_orders_quarantine
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'pos',
+    'confidentiality' = 'restricted',
+    'regulation' = 'appi,pci_dss',
+    'business_owner' = 'data-engineering'
+  );
 
-ALTER TABLE IDENTIFIER(:catalog || '.' || :schema || '.gold_customer_summary')
-  SET TAGS ('domain' = 'sales', 'confidentiality' = 'confidential', 'business_owner' = 'sales-ops');
+ALTER TABLE silver_orders_quarantine
+  ALTER COLUMN customer_id SET TAGS ('pii' = 'customer_id');
+ALTER TABLE silver_orders_quarantine
+  ALTER COLUMN payment_card_last4 SET TAGS ('pii' = 'payment_card_partial');
+ALTER TABLE silver_orders_quarantine
+  ALTER COLUMN payment_card_hash SET TAGS ('pii' = 'payment_card_hashed');
+
+-- --- Gold: customer_summary（customersから派生した匿名化済みPIIを含む） ---
+ALTER TABLE gold_customer_summary
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'crm',
+    'confidentiality' = 'confidential',
+    'regulation' = 'appi',
+    'business_owner' = 'sales-ops'
+  );
+
+ALTER TABLE gold_customer_summary
+  ALTER COLUMN customer_id SET TAGS ('pii' = 'customer_id');
+ALTER TABLE gold_customer_summary
+  ALTER COLUMN name SET TAGS ('pii' = 'name');
+ALTER TABLE gold_customer_summary
+  ALTER COLUMN email_hash SET TAGS ('pii' = 'email_hashed');
+ALTER TABLE gold_customer_summary
+  ALTER COLUMN phone_masked SET TAGS ('pii' = 'phone_masked');
+ALTER TABLE gold_customer_summary
+  ALTER COLUMN address_region SET TAGS ('pii' = 'address_generalized');
+ALTER TABLE gold_customer_summary
+  ALTER COLUMN birth_year SET TAGS ('pii' = 'birth_year_generalized');
+
+-- --- Gold: daily_sales_by_region（region/date/statusの集計のみでPII列は無い） ---
+ALTER TABLE gold_daily_sales_by_region
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'pos',
+    'confidentiality' = 'internal',
+    'business_owner' = 'sales-ops'
+  );
+
+-- --- Gold: data_quality_summary（検疫状況の集計のみでPII列は無い） ---
+ALTER TABLE gold_data_quality_summary
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'pos',
+    'confidentiality' = 'internal',
+    'business_owner' = 'data-engineering'
+  );
+
+-- --- Gold: order_quality_gate（customer_idを含むためPII/regulationを付与） ---
+ALTER TABLE gold_order_quality_gate
+  SET TAGS (
+    'domain' = 'sales',
+    'source_system' = 'pos',
+    'confidentiality' = 'internal',
+    'regulation' = 'appi',
+    'business_owner' = 'data-engineering'
+  );
+
+ALTER TABLE gold_order_quality_gate
+  ALTER COLUMN customer_id SET TAGS ('pii' = 'customer_id');
 
 -- ============================================================================
 -- 2. Row Filter: gold_daily_sales_by_region

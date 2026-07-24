@@ -834,7 +834,7 @@ RAGパイプライン側（`governance/abac_policies.sql`）は、これとは�
 | Owner | schema単位（`data-engineering`） | 同左 | 同左 |
 | Row Filter | 不要 | 不要 | region/status（`gold_daily_sales_by_region`）、CHURNED顧客（`gold_customer_summary`） |
 | Column Mask | 不要 | 不要 | discount_rate（`gold_customer_summary`） |
-| Tag | domain/confidentiality/source_system/business_owner等 | 同左 + pii | 同左 |
+| Tag | domain/source_system/business_owner/confidentiality/regulation/pii（該当列） | 同左 | 同左 |
 | Predictive Optimization | アカウントレベルの既定機能に委ねる（本バンドルではOPTIMIZE/VACUUMジョブを個別定義していない） | 同左 | 同左 |
 
 **添付リファレンス表からの補足・修正点**:
