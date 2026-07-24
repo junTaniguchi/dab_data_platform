@@ -1,0 +1,78 @@
+# 構造化データパイプライン向けの運用ダッシュボードを DAB リソースとして宣言する。
+#
+# 各ダッシュボードは monitoring/dashboards/*.lvdash.json（Lakeview形式）を
+# file_path で参照する。この13ファイルは monitoring/generate_dashboards.py が
+# 生成したもので、手で編集しない（catalog/schema/pipeline_id を変更したい場合は
+# generate_dashboards.py 側の定数を書き換えてから再実行すること。理由は同スクリプト
+# 冒頭のコメント参照 — file_path経由のJSONに対しては ${var.xxx} 展開が実機で
+# 機能しないことを確認したため、スクリプト側で値を確定させている）。
+#
+# No.22「承認済みメンテナンス一覧との突合」は用意していない
+# （Jira等の変更管理ツールとの連携が本リポジトリの範囲外のため。
+# README「監視・アラート」セクション参照）。
+resources:
+  dashboards:
+    structured_dashboard_query_health:
+      display_name: "[構造化] クエリの健康診断（中央値付き）"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/query_health.lvdash.json
+
+    structured_dashboard_finops:
+      display_name: "[構造化] FinOps（コスト配賦）"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/finops_cost_allocation.lvdash.json
+
+    structured_dashboard_cost_per_user:
+      display_name: "[構造化] Cost per User（概算）"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/cost_per_user.lvdash.json
+
+    structured_dashboard_warehouse_cost_autostop:
+      display_name: "[構造化] Warehouse別コストとAuto Stop設定"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/warehouse_cost_autostop.lvdash.json
+
+    structured_dashboard_cost_by_hour_dow:
+      display_name: "[構造化] 時間帯別・曜日別コスト"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/cost_by_hour_dow.lvdash.json
+
+    structured_dashboard_sla:
+      display_name: "[構造化] SLAダッシュボード"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/sla_dashboard.lvdash.json
+
+    structured_dashboard_pipeline_stability:
+      display_name: "[構造化] パイプライン安定性とエラー分類"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/pipeline_stability_error_category.lvdash.json
+
+    structured_dashboard_mttr:
+      display_name: "[構造化] MTTR（平均復旧時間）"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/mttr.lvdash.json
+
+    structured_dashboard_pii_access:
+      display_name: "[構造化] 監査ログ（PIIアクセスと新規ユーザー）"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/pii_access_new_users.lvdash.json
+
+    structured_dashboard_table_mutation_audit:
+      display_name: "[構造化] 監査ログ（テーブル更新・削除）"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/table_mutation_audit.lvdash.json
+
+    structured_dashboard_uc_metadata_quality:
+      display_name: "[構造化] Unity Catalog品質（コメント・タグ・Owner）"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/uc_metadata_quality.lvdash.json
+
+    structured_dashboard_unused_tables:
+      display_name: "[構造化] 未使用データ・テーブルの棚卸し"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/unused_table_inventory.lvdash.json
+
+    structured_dashboard_lineage:
+      display_name: "[構造化] 依存関係・リネージ下流依存数"
+      warehouse_id: ${var.warehouse_id}
+      file_path: ../monitoring/dashboards/lineage_downstream_count.lvdash.json

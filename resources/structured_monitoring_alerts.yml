@@ -1,0 +1,459 @@
+# 構造化データパイプライン向けの運用監視 SQL Alert（AlertV2）を DAB リソースとして宣言する。
+#
+# 【要求仕様と実テーブルとの乖離について】
+# 元の要求仕様（SQL Alert表）には、実在しないテーブル・列がいくつか含まれていた。
+# 実際にこのワークスペースの system スキーマへ `DESCRIBE` を実行して実在を確認し、
+# 以下のとおり補正した（詳細は README「監視・アラート」セクション参照）。
+#   - system.lakeflow.jobs には result_state/period_start_time は存在しない
+#     （それらは system.lakeflow.job_run_timeline / job_task_run_timeline に実在する）。
+#   - system.job_run という system テーブルは存在しない（正しくは system.lakeflow.job_run_timeline）。
+#   - system.pipelines.events という system テーブルは存在しない。パイプラインの
+#     Update単位の成否は system.lakeflow.pipeline_update_timeline（実在）で追える。
+#     ただしこのテーブルには message 列（エラー文言）が無いため、詳細調査には
+#     event_log('<pipeline-id>') を使う（「エラー調査(EventLog)」セクション参照）。
+#
+# 【AlertV2 の設計方針】
+# `evaluation.source` は「クエリ結果の1行」の特定の列だけを評価する
+# （aggregation未指定時はUIの「First row」と同じ挙動）。複数行返るクエリだと
+# どの行が評価されるか不安定になるため、本ファイルの全アラートは
+# 「集計してGROUP BYなしの1行だけを返すクエリ」に統一し、
+# 1列目を `xxx_count` / `xxx_flag`（該当件数）として評価対象にしている
+# （表の「条件」列に書かれていた閾値は、この1行に集約する前段のCTE内で
+# WHERE/HAVINGとして適用済み。つまり「1件でも該当行があれば異常」＝
+# `xxx_count > 0` という統一ロジックでアラートを構成している）。
+#
+# 【スケジュールについて】
+# 全アラートを既定で `pause_status: PAUSED` にしてある。Free Edition/検証用の
+# ワークスペースで意図せずSQLウェアハウスの継続的な課金が発生しないようにするため
+# （resources/structured_pipeline_job.job.yml と同じ方針）。動作確認後、
+# 必要なアラートだけ `UNPAUSED` に変更すること。
+#
+# 【通知先について】
+# 既定では `notification.subscriptions` を設定していない（宛先メールアドレスを
+# 空/誤った値でデプロイすると失敗するため。resources/*.pipeline.yml の
+# notifications ブロックが既定でコメントアウトされているのと同じ理由）。
+# 通知したい場合は、各アラートの `evaluation.notification.subscriptions` に
+# `- user_email: <実際のメールアドレス>` を追記すること。
+
+resources:
+  alerts:
+    # --- 1. 失敗ジョブの即時検出 ---
+    structured_alert_failed_tasks:
+      display_name: "[構造化] 失敗ジョブの即時検出"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0/10 * * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- task_key単位でどのタスク（bronze/silver/gold等に相当するジョブタスク）が
+        -- 落ちたかは sample_task_key で分かる。period_start_timeが直近であるほど
+        -- 緊急度が高い（詳細行が必要な場合は WHERE 句だけこのクエリから流用し、
+        -- SELECT job_id, task_key, result_state, period_start_time で個別にSELECTすること）。
+        SELECT
+          COUNT(*) AS failed_task_count,
+          MAX(period_start_time) AS latest_failure_time,
+          MAX(job_id) AS sample_job_id,
+          MAX(task_key) AS sample_task_key
+        FROM system.lakeflow.job_task_run_timeline
+        WHERE result_state = 'FAILED'
+          AND period_start_time > current_timestamp() - INTERVAL 1 DAY
+      evaluation:
+        source:
+          name: failed_task_count
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 2. 直近10分の失敗イベント検出（パイプラインUpdate） ---
+    structured_alert_recent_pipeline_failures:
+      display_name: "[構造化] 直近10分のパイプライン失敗検出"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0/5 * * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- system.pipelines.events は実在しないため system.lakeflow.pipeline_update_timeline
+        -- を使う。ただしこちらには message 列（エラー文言）が無いため、根本原因の
+        -- 特定にはこのアラート発火後に event_log('<pipeline-id>') を読むこと
+        -- （「エラー調査(EventLog)」#26 参照。同一エラーが複数件連続する場合、
+        -- 根本原因は1つのことが多い）。
+        SELECT
+          COUNT(*) AS failed_update_count,
+          MAX(period_start_time) AS latest_failure_time,
+          MAX(pipeline_id) AS sample_pipeline_id
+        FROM system.lakeflow.pipeline_update_timeline
+        WHERE result_state = 'FAILED'
+          AND period_start_time > current_timestamp() - INTERVAL 10 MINUTES
+      evaluation:
+        source:
+          name: failed_update_count
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 3. 前回成功時刻からの経過時間検知 ---
+    structured_alert_stale_jobs:
+      display_name: "[構造化] 前回成功時刻からの経過時間検知（24時間超）"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0 * * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- 単発FAILEDだけでは影響範囲が見えないため、最後の成功からどれだけ
+        -- 経過しているかで実質的な業務影響を判断する。
+        -- 注意: 一度も成功したことが無いジョブは last_success_time が無いため
+        -- この集計には現れない（元の要求仕様と同じ既知の盲点。一度も成功しない
+        -- ジョブは #1 の失敗検出アラートで別途拾われる）。
+        WITH last_success AS (
+          SELECT job_id, MAX(period_start_time) AS last_success_time
+          FROM system.lakeflow.job_run_timeline
+          WHERE result_state = 'SUCCESS'
+          GROUP BY job_id
+        )
+        SELECT
+          COUNT(*) AS stale_job_count,
+          MAX(job_id) AS sample_job_id,
+          MIN(last_success_time) AS oldest_last_success_time
+        FROM last_success
+        WHERE current_timestamp() - last_success_time > INTERVAL 24 HOURS
+      evaluation:
+        source:
+          name: stale_job_count
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 4. SLA超過（実行時間）検知 ---
+    structured_alert_sla_duration:
+      display_name: "[構造化] SLA超過（実行時間15分超）検知"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0/15 * * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- system.job_run は実在しないため system.lakeflow.job_run_timeline を使う。
+        -- SUCCESSなのに遅い場合は性能劣化、FAILEDと併発ならリトライ待ちを疑う
+        -- （result_stateも一緒に見て切り分けること）。
+        SELECT
+          COUNT(*) AS long_running_count,
+          MAX(job_id) AS sample_job_id,
+          MAX(run_id) AS sample_run_id,
+          MAX(TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time)) AS max_duration_minutes
+        FROM system.lakeflow.job_run_timeline
+        WHERE period_start_time > current_timestamp() - INTERVAL 1 DAY
+          AND TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) > 15
+      evaluation:
+        source:
+          name: long_running_count
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 5. duration×処理データ量の相関確認 ---
+    structured_alert_duration_vs_output_rows:
+      display_name: "[構造化] 実行時間とoutput_rowsの相関異常検知"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0 6 * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- 【要求仕様からの補正】元の案は `jr.job_id = el.update_id` でJOINしていたが、
+        -- job_id（ジョブ）と update_id（パイプラインUpdate）は別のID空間であり
+        -- 直接比較できない。正しい対応関係は
+        -- system.lakeflow.pipeline_update_timeline.trigger_details.job_task.job_task_run_id
+        -- が、そのUpdateをトリガーしたジョブタスク実行のIDである。
+        -- ここでは pipeline_update_timeline 自身が持つ period_start_time/period_end_time
+        -- から実行時間を、event_log() の flow_progress イベントから output_rows を取得し、
+        -- 同じ update_id で結合する（update_idはpipeline_update_timeline側にも
+        -- event_log側にも存在する共通キーなので、そちらで結合する方が単純かつ正確）。
+        -- データ量増加による自然な遅延か、性能劣化（スキュー・非効率な結合等）かを
+        -- 切り分けるため、「durationの増加率がoutput_rowsの増加率の1.5倍を超える」
+        -- 場合のみ異常とみなす。
+        WITH pu AS (
+          SELECT
+            update_id,
+            period_start_time,
+            TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) AS duration_minutes
+          FROM system.lakeflow.pipeline_update_timeline
+          WHERE pipeline_id = '${resources.pipelines.structured_pipeline_etl.id}'
+            AND result_state = 'COMPLETED'
+        ),
+        el AS (
+          SELECT
+            origin.update_id AS update_id,
+            SUM(TRY_CAST(details:flow_progress.metrics.num_output_rows AS BIGINT)) AS output_rows
+          FROM event_log('${resources.pipelines.structured_pipeline_etl.id}')
+          WHERE event_type = 'flow_progress'
+          GROUP BY origin.update_id
+        ),
+        joined AS (
+          SELECT
+            pu.update_id,
+            pu.duration_minutes,
+            el.output_rows,
+            LAG(pu.duration_minutes) OVER (ORDER BY pu.period_start_time) AS prev_duration_minutes,
+            LAG(el.output_rows) OVER (ORDER BY pu.period_start_time) AS prev_output_rows
+          FROM pu JOIN el ON pu.update_id = el.update_id
+        )
+        SELECT
+          COUNT(*) AS anomalous_update_count,
+          MAX(update_id) AS sample_update_id,
+          MAX(duration_minutes) AS sample_duration_minutes,
+          MAX(output_rows) AS sample_output_rows
+        FROM joined
+        WHERE prev_duration_minutes > 0
+          AND prev_output_rows > 0
+          AND (duration_minutes / prev_duration_minutes) > 1.5 * GREATEST(output_rows / prev_output_rows, 0.01)
+      evaluation:
+        source:
+          name: anomalous_update_count
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 6. 日次コスト急増検知 ---
+    structured_alert_daily_cost_spike:
+      display_name: "[構造化] 日次コスト急増・急減検知"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0 7 * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- 100%超の急増は無限リトライやクラスタ停止忘れを疑う。
+        -- 元の要求仕様は急増（+20%超）のみだったが、判断基準に書かれていた
+        -- 「マイナス値（急減）も停止の兆候として監視する」を実際に条件へ反映し、
+        -- ABS()で急増・急減の両方を検知する。
+        WITH daily AS (
+          SELECT usage_date, SUM(usage_quantity) AS total_usage
+          FROM system.billing.usage
+          WHERE usage_date >= current_date() - 1
+          GROUP BY usage_date
+        )
+        SELECT
+          COUNT(*) AS spike_flag,
+          MAX(t.total_usage) AS today_usage,
+          MAX(y.total_usage) AS yesterday_usage,
+          MAX(ROUND((t.total_usage - y.total_usage) / NULLIF(y.total_usage, 0) * 100, 2)) AS growth_rate_pct
+        FROM (SELECT total_usage FROM daily WHERE usage_date = current_date()) t
+        CROSS JOIN (SELECT total_usage FROM daily WHERE usage_date = current_date() - 1) y
+        WHERE ABS((t.total_usage - y.total_usage) / NULLIF(y.total_usage, 0) * 100) > 20
+      evaluation:
+        source:
+          name: spike_flag
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 7. Warehouse別／Project別のコスト増加率検知 ---
+    structured_alert_cost_by_warehouse_project:
+      display_name: "[構造化] Warehouse別・Project別コスト急増検知"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 15 7 * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- 【要求仕様からの補正】system.billing.usage に compute_resource_name という列は
+        -- 実在しない。Warehouse名は usage_metadata.warehouse_id を
+        -- system.compute.warehouses（実在）へJOINして取得する。
+        -- #6が全体増加を検知するのに対し、こちらは「全体は正常だが特定
+        -- Warehouse/Projectだけ異常」というケースを補足する。
+        -- project_name が NULL の行が多い場合はコスト以前にタグ付けの徹底が課題
+        -- （このワークスペースで実際に確認したところ、custom_tags['project'] を
+        -- 設定していないため現状は全行NULLになる。運用開始前にタグ付けルールの
+        -- 整備が必要、という実際の発見）。
+        WITH agg AS (
+          SELECT
+            w.warehouse_name,
+            u.custom_tags['project'] AS project_name,
+            SUM(CASE WHEN u.usage_date = current_date() THEN u.usage_quantity ELSE 0 END) AS today_usage,
+            SUM(CASE WHEN u.usage_date = current_date() - 1 THEN u.usage_quantity ELSE 0 END) AS yesterday_usage
+          FROM system.billing.usage u
+          LEFT JOIN system.compute.warehouses w
+            ON u.usage_metadata.warehouse_id = w.warehouse_id
+          WHERE u.usage_date >= current_date() - 1
+          GROUP BY w.warehouse_name, u.custom_tags['project']
+        )
+        SELECT
+          COUNT(*) AS spike_entity_count,
+          MAX(warehouse_name) AS sample_warehouse,
+          MAX(project_name) AS sample_project,
+          MAX(ROUND((today_usage - yesterday_usage) / NULLIF(yesterday_usage, 0) * 100, 2)) AS max_growth_rate_pct
+        FROM agg
+        WHERE yesterday_usage > 0
+          AND (today_usage - yesterday_usage) / yesterday_usage * 100 > 50
+      evaluation:
+        source:
+          name: spike_entity_count
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 8. ジョブ成功率の悪化検知 ---
+    structured_alert_success_rate:
+      display_name: "[構造化] ジョブ成功率の悪化検知（週次99%割れ）"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 30 7 * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- system.lakeflow.jobs には result_state が無いため system.lakeflow.job_run_timeline
+        -- を使う。1週間平均のため単発失敗では動かない。閾値割れは継続的な不具合のサイン。
+        WITH stats AS (
+          SELECT
+            COUNT(*) AS total_runs,
+            COUNT_IF(result_state = 'SUCCESS') AS success_runs
+          FROM system.lakeflow.job_run_timeline
+          WHERE period_start_time >= current_date() - 7
+        )
+        SELECT
+          COUNT(*) AS breach_flag,
+          MAX(total_runs) AS total_runs,
+          MAX(ROUND(success_runs * 100.0 / NULLIF(total_runs, 0), 2)) AS success_rate_pct
+        FROM stats
+        WHERE success_runs * 100.0 / NULLIF(total_runs, 0) < 99
+      evaluation:
+        source:
+          name: breach_flag
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 9. データFreshness遅延検知 ---
+    structured_alert_freshness:
+      display_name: "[構造化] gold_data_quality_summary Freshness遅延検知（15分超）"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0/15 * * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- 【要求仕様からの補正】monitoring.table_updates という system/管理テーブルは
+        -- 実在しない。代わりに、そのテーブルへ最後に書き込みがあった時刻を
+        -- system.access.table_lineage（実在。UCのテーブル間リネージを追跡する
+        -- system table）の event_time から取得する。
+        -- まず #1/#2 で該当パイプラインの実行有無を確認し、実行済みで遅延なら
+        -- 性能問題、未実行ならスケジュール側の問題と切り分けること。
+        SELECT
+          COUNT(*) AS freshness_breach_flag,
+          MAX(last_update_time) AS last_update_time,
+          MAX(ROUND(TIMESTAMPDIFF(MINUTE, last_update_time, current_timestamp()) / 60.0, 2)) AS freshness_delay_hours
+        FROM (
+          SELECT MAX(event_time) AS last_update_time
+          FROM system.access.table_lineage
+          WHERE target_table_full_name = '${var.catalog}.${resources.schemas.structured_schema.name}.gold_data_quality_summary'
+        )
+        WHERE TIMESTAMPDIFF(MINUTE, last_update_time, current_timestamp()) > 15
+      evaluation:
+        source:
+          name: freshness_breach_flag
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 10. 品質エラー率（Expectation違反率）検知 ---
+    structured_alert_quality_failure_rate:
+      display_name: "[構造化] 品質エラー率（検疫率）検知（1%超）"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 45 7 * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- 【要求仕様からの補正】monitoring.data_quality という管理テーブルは実在しない。
+        -- 本パイプラインが実際に生成している gold_data_quality_summary
+        -- （transformations/gold/gold_data_quality_summary.py）をそのまま使う。
+        -- 急上昇は「データが壊れた」か「ルール自体を最近変更した」かの2通り。
+        -- 直近のgovernance/構造化ルール変更PRを先に確認すること。
+        SELECT
+          COUNT(*) AS breach_flag,
+          MAX(quarantine_count) AS quarantine_count,
+          MAX(total_count) AS total_count,
+          MAX(ROUND(quarantine_count * 100.0 / NULLIF(total_count, 0), 2)) AS failure_rate_pct
+        FROM (
+          SELECT DISTINCT quarantine_count, total_count
+          FROM ${var.catalog}.${resources.schemas.structured_schema.name}.gold_data_quality_summary
+        )
+        WHERE quarantine_count * 100.0 / NULLIF(total_count, 0) > 1
+      evaluation:
+        source:
+          name: breach_flag
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK
+
+    # --- 11. Retry急増・短間隔Retryの検知 ---
+    structured_alert_flapping_retries:
+      display_name: "[構造化] Retry急増・短間隔Retry検知"
+      warehouse_id: ${var.warehouse_id}
+      schedule:
+        quartz_cron_schedule: "0 0/10 * * * ?"
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED
+      query_text: |
+        -- 【要求仕様からの補正】system.pipelines.events に event_type='RETRY' という
+        -- 値は実在しない。system.lakeflow.job_task_run_timeline上で、同一
+        -- (job_id, task_key) の実行が短時間に何度も記録されている状態を
+        -- 「実質的なリトライ」とみなして代用する。
+        -- Retry自体は正常な自己回復。ただし間隔が極端に短い場合は、一時障害では
+        -- なくAPI不安定やリソース不足の可能性が高い。
+        WITH attempts AS (
+          SELECT
+            job_id,
+            task_key,
+            period_start_time,
+            TIMESTAMPDIFF(
+              SECOND,
+              LAG(period_start_time) OVER (PARTITION BY job_id, task_key ORDER BY period_start_time),
+              period_start_time
+            ) AS interval_sec
+          FROM system.lakeflow.job_task_run_timeline
+          WHERE period_start_time > current_timestamp() - INTERVAL 1 DAY
+        ),
+        grouped AS (
+          SELECT job_id, task_key, COUNT(*) AS attempt_count, MIN(interval_sec) AS min_interval_sec
+          FROM attempts
+          GROUP BY job_id, task_key
+        )
+        SELECT
+          COUNT(*) AS flapping_task_count,
+          MAX(job_id) AS sample_job_id,
+          MAX(task_key) AS sample_task_key,
+          MAX(attempt_count) AS sample_attempt_count
+        FROM grouped
+        WHERE attempt_count > 3 AND min_interval_sec < 60
+      evaluation:
+        source:
+          name: flapping_task_count
+        comparison_operator: GREATER_THAN
+        threshold:
+          value:
+            double_value: 0
+        empty_result_state: OK

@@ -1,0 +1,86 @@
+{
+  "datasets": [
+    {
+      "name": "mttr_ds",
+      "displayName": "mttr_ds",
+      "queryLines": [
+        "-- 【要求仕様からの補正】monitoring.mttr という管理テーブルは実在しない。",
+        "-- 『最後のFAILEDから次のSUCCESSまでの時間』を",
+        "-- system.lakeflow.job_run_timeline から直接算出する",
+        "-- （＝自動復旧時間の近似値。人手対応を含めたMTTRを測るにはAck記録が別途必要、",
+        "-- という判断基準は元の要求仕様のまま変わらない）。",
+        "WITH runs AS (",
+        "  SELECT",
+        "    job_id, result_state, period_end_time,",
+        "    LEAD(result_state) OVER (PARTITION BY job_id ORDER BY period_start_time) AS next_result_state,",
+        "    LEAD(period_start_time) OVER (PARTITION BY job_id ORDER BY period_start_time) AS next_start_time",
+        "  FROM system.lakeflow.job_run_timeline",
+        ")",
+        "SELECT",
+        "  job_id,",
+        "  ROUND(AVG(TIMESTAMPDIFF(MINUTE, period_end_time, next_start_time)), 2) AS avg_mttr_minutes",
+        "FROM runs",
+        "WHERE result_state = 'FAILED' AND next_result_state = 'SUCCESS'",
+        "GROUP BY job_id"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "MTTR（平均復旧時間）",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "mttr_ds",
+                  "fields": [
+                    {
+                      "name": "job_id",
+                      "expression": "`job_id`"
+                    },
+                    {
+                      "name": "avg_mttr_minutes",
+                      "expression": "`avg_mttr_minutes`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "job_id",
+                    "displayName": "ジョブID"
+                  },
+                  {
+                    "fieldName": "avg_mttr_minutes",
+                    "displayName": "平均MTTR(分)"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "MTTR（平均復旧時間）"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

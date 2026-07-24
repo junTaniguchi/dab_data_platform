@@ -1,0 +1,95 @@
+{
+  "datasets": [
+    {
+      "name": "pii_access_ds",
+      "displayName": "pii_access_ds",
+      "queryLines": [
+        "-- 【要求仕様からの補正】system.access.audit はUnity Catalogのメタデータ操作",
+        "-- （createTable/getTable等）は記録するが、行レベルのSELECT実行そのものは",
+        "-- 記録しない（実機のaction_name一覧で確認済み）。実際にテーブルへSELECTした",
+        "-- 記録は system.query.history の方に残るため、こちらを使う。",
+        "-- 普段そのテーブルに触れないユーザーや、直近90日に登場しなかった新規",
+        "-- アクセスユーザーを優先的に確認する。",
+        "SELECT",
+        "  executed_by,",
+        "  start_time,",
+        "  statement_text",
+        "FROM system.query.history",
+        "WHERE statement_type = 'SELECT'",
+        "  AND lower(statement_text) LIKE '%customer%'",
+        "  AND executed_by NOT IN (",
+        "    SELECT DISTINCT executed_by",
+        "    FROM system.query.history",
+        "    WHERE start_time BETWEEN current_date() - 90 AND current_date() - 1",
+        "  )",
+        "ORDER BY start_time DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "監査ログ（PIIアクセス＋新規ユーザー）",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "pii_access_ds",
+                  "fields": [
+                    {
+                      "name": "executed_by",
+                      "expression": "`executed_by`"
+                    },
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "statement_text",
+                      "expression": "`statement_text`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "executed_by",
+                    "displayName": "実行者"
+                  },
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "実行時刻"
+                  },
+                  {
+                    "fieldName": "statement_text",
+                    "displayName": "SQL文"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "監査ログ（PIIアクセス＋新規ユーザー）"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

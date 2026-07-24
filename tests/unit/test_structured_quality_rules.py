@@ -39,8 +39,9 @@ def _passes_all_rules(order: dict) -> bool:
     追加/削除して更新すること（下の assert がキー名の乖離を検知する）。
     """
     checks = {
+        "order_id_not_null": order.get("order_id") is not None,
         "customer_id_not_null": order.get("customer_id") is not None,
-        "positive_amount": (order.get("amount") or 0) > 0,
+        "positive_amount": order.get("amount") is not None and order.get("amount") > 0,
         "order_date_not_future": order["order_date"] <= datetime.date.today().isoformat(),
         "valid_currency": order.get("currency") in ("JPY", "USD"),
     }
@@ -53,6 +54,7 @@ def _passes_all_rules(order: dict) -> bool:
 
 def test_order_rules_keys_are_stable():
     assert set(ORDER_RULES.keys()) == {
+        "order_id_not_null",
         "customer_id_not_null",
         "positive_amount",
         "order_date_not_future",

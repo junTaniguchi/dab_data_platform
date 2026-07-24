@@ -1,0 +1,100 @@
+{
+  "datasets": [
+    {
+      "name": "table_mutation_ds",
+      "displayName": "table_mutation_ds",
+      "queryLines": [
+        "-- 【要求仕様からの補正】system.access.audit にはDELETE/UPDATE/DROP TABLE/",
+        "-- ALTER TABLEという文字列そのもののaction_nameは存在しない",
+        "-- （実在するのはcreateTable/deleteTable/updateTables等のUC操作名で、",
+        "-- 行レベルDML(DELETE/UPDATE文)は記録されない）。実行されたSQL文の種別が",
+        "-- そのまま残る system.query.history.statement_type を使う方が、",
+        "-- 元の運用目的（DELETE/UPDATE/DROP/ALTERの追跡）に対して正確。",
+        "-- スケジュール済みメンテナンスかどうかをまず確認し、予定外の操作は",
+        "-- 即座に本人確認する。",
+        "SELECT",
+        "  executed_by,",
+        "  start_time,",
+        "  statement_type,",
+        "  statement_text",
+        "FROM system.query.history",
+        "WHERE statement_type IN ('DELETE', 'UPDATE', 'DROP', 'ALTER')",
+        "ORDER BY start_time DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "監査ログ（本番テーブル更新・削除）",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "table_mutation_ds",
+                  "fields": [
+                    {
+                      "name": "executed_by",
+                      "expression": "`executed_by`"
+                    },
+                    {
+                      "name": "start_time",
+                      "expression": "`start_time`"
+                    },
+                    {
+                      "name": "statement_type",
+                      "expression": "`statement_type`"
+                    },
+                    {
+                      "name": "statement_text",
+                      "expression": "`statement_text`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "executed_by",
+                    "displayName": "実行者"
+                  },
+                  {
+                    "fieldName": "start_time",
+                    "displayName": "実行時刻"
+                  },
+                  {
+                    "fieldName": "statement_type",
+                    "displayName": "種別"
+                  },
+                  {
+                    "fieldName": "statement_text",
+                    "displayName": "SQL文"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "監査ログ（本番テーブル更新・削除）"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

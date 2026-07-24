@@ -1,0 +1,107 @@
+{
+  "datasets": [
+    {
+      "name": "unused_table_ds",
+      "displayName": "unused_table_ds",
+      "queryLines": [
+        "-- 【要求仕様からの補正】2点補正している。",
+        "-- (1) information_schema.tables に size_gb にあたる列（バイトサイズ）は",
+        "--     存在しない。テーブルごとのサイズはDESCRIBE DETAILを個別に叩く必要が",
+        "--     あり、1本のSQLでは取得できない（本リポジトリでは未実装。将来的に",
+        "--     全テーブルを列挙してDESCRIBE DETAILする別ジョブが必要）。",
+        "-- (2) 最終アクセス時刻は system.access.audit ではなく",
+        "--     system.access.table_lineage（実在。UCのテーブル間リネージを",
+        "--     追跡するsystem table）の event_time を使う方が正確。",
+        "-- size_gbが取得できるようになった際は、大きいテーブルほど優先度を上げる。",
+        "-- 削除前には利用部門への確認が必須。",
+        "SELECT",
+        "  t.table_catalog,",
+        "  t.table_schema,",
+        "  t.table_name,",
+        "  a.last_access",
+        "FROM workspace.information_schema.tables t",
+        "LEFT JOIN (",
+        "  SELECT target_table_full_name, MAX(event_time) AS last_access",
+        "  FROM system.access.table_lineage",
+        "  GROUP BY target_table_full_name",
+        ") a",
+        "  ON CONCAT(t.table_catalog, '.', t.table_schema, '.', t.table_name) = a.target_table_full_name",
+        "WHERE a.last_access < current_date() - INTERVAL 90 DAYS OR a.last_access IS NULL"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "未使用データ・テーブルサイズの棚卸し",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "unused_table_ds",
+                  "fields": [
+                    {
+                      "name": "table_catalog",
+                      "expression": "`table_catalog`"
+                    },
+                    {
+                      "name": "table_schema",
+                      "expression": "`table_schema`"
+                    },
+                    {
+                      "name": "table_name",
+                      "expression": "`table_name`"
+                    },
+                    {
+                      "name": "last_access",
+                      "expression": "`last_access`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "table_catalog",
+                    "displayName": "カタログ"
+                  },
+                  {
+                    "fieldName": "table_schema",
+                    "displayName": "スキーマ"
+                  },
+                  {
+                    "fieldName": "table_name",
+                    "displayName": "テーブル名"
+                  },
+                  {
+                    "fieldName": "last_access",
+                    "displayName": "最終アクセス"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "未使用データ・テーブルサイズの棚卸し"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

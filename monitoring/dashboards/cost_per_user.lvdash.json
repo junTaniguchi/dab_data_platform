@@ -1,0 +1,77 @@
+{
+  "datasets": [
+    {
+      "name": "cost_per_user_ds",
+      "displayName": "cost_per_user_ds",
+      "queryLines": [
+        "-- system.billing.usage はコンピュート単位の集計であり個人には直接紐づかないため、",
+        "-- 実行時間ベースの近似値として見る。",
+        "SELECT",
+        "  executed_by,",
+        "  SUM(total_duration_ms) AS total_ms",
+        "FROM system.query.history",
+        "WHERE start_time >= current_date() - 7",
+        "GROUP BY executed_by",
+        "ORDER BY total_ms DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "Cost/User（概算）",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_per_user_ds",
+                  "fields": [
+                    {
+                      "name": "executed_by",
+                      "expression": "`executed_by`"
+                    },
+                    {
+                      "name": "total_ms",
+                      "expression": "`total_ms`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "executed_by",
+                    "displayName": "実行者"
+                  },
+                  {
+                    "fieldName": "total_ms",
+                    "displayName": "累計実行時間(ms)"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Cost/User（概算）"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

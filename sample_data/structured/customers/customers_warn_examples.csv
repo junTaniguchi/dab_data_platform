@@ -1,0 +1,3 @@
+customer_id,name,email,phone,address,birth_date,region,status,operation,updated_at,source_system
+,Null Id Test,nullid.test@example.com,090-0000-1111,"1-1 Test, Tokyo",1990-01-01,tokyo,ACTIVE,INSERT,2025-01-21T09:00:00,crm
+CUST007,Malformed Email Test,malformed-email-no-at-symbol,090-0000-2222,"2-2 Test, Osaka",1991-02-02,osaka,ACTIVE,INSERT,2025-01-21T09:05:00,crm

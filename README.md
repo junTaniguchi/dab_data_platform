@@ -869,8 +869,139 @@ databricks bundle run structured_pipeline_job -t dev
 `@dp.expect_all_or_fail(GOLD_ORDER_GATE_RULES)` が `no_duplicate_order_id` 違反を検知し、
 パイプライン更新が失敗します。重複ファイルを取り除いてから再実行すると成功に戻ります。
 
+## Expectationで実際に引っかかるサンプルデータ
+
+Bronze層のWarnルール（`BRONZE_ORDER_WARN_RULES` / `BRONZE_CUSTOMER_WARN_RULES`）は、
+既定のサンプルデータだけでは一度も違反しない（=Warnが実際に発火するところを
+一度も観測できない）状態だった。そのため以下のファイルを追加し、Bronze Warn ルールが
+実際に発火するデータを用意した。
+
+- `sample_data/structured/orders/orders_warn_examples.json`
+  - `order_id: null` の行 → `order_id_present`（Bronze Warn）が発火
+  - `amount: null` の行（`ORD1012`) → `amount_present`（Bronze Warn）が発火
+- `sample_data/structured/customers/customers_warn_examples.csv`
+  - `customer_id` が空の行 → `customer_id_present`（Bronze Warn）が発火
+  - `CUST007`（`@`を含まない不正な形式のメール）→ `email_looks_like_email`（Bronze Warn）が発火
+
+これらは Bronze では Warn（保持されるだけ）だが、Silver の Drop/検疫ルールにも
+そのまま違反するため、`silver_customers` からは Drop され、`silver_orders_quarantine`
+へ捕捉される（実際にデプロイし、以下の実データで確認済み）。
+
+**この検証作業を通じて、実機で新たなバグを1件発見し修正した**
+（詳細は次の「既知の制約」セクションの1件目を参照。`order_id`/`amount` が
+`NULL` になり得るケースで、正常系・検疫系のどちらからもサイレントに行が消える
+という、検疫パターンの中核的な不変条件を破る不具合だった）。
+
+修正後、`databricks pipelines start-update <pipeline-id> --full-refresh` で
+全テーブルを再構築して確認した最終結果:
+
+```
+silver_orders_quarantine:
+  order_id=NULL   violated_rules=["order_id_not_null"]   -- 新規追加したorder_id_not_nullルールで捕捉
+  ORD1003         violated_rules=["positive_amount"]
+  ORD1004         violated_rules=["customer_id_not_null"]
+  ORD1005         violated_rules=["order_date_not_future"]
+  ORD1012         violated_rules=["positive_amount"]      -- amount=NULLがNULL-safe化により正しく捕捉
+
+silver_orders:    9件（＝bronze_orders 14件 − quarantine 5件。過不足なし）
+silver_customers: CUST007・customer_id=NULLの行は含まれない（Silverで正しくDrop）
+```
+
+## 監視・アラート（構造化データパイプライン）
+
+運用監視として、SQL Alert 11件・ダッシュボード13件・障害調査用SQL 5件を
+DABリソース（`resources/structured_monitoring_alerts.yml` /
+`resources/structured_monitoring_dashboards.yml`）およびリファレンスSQL
+（`monitoring/investigations/*.sql`）として追加し、実際にこのワークスペースへ
+デプロイして動作確認した。
+
+### 実在しないテーブル・列の補正について
+
+依頼段階のSQL仕様には、実在しないシステムテーブル・列がいくつか含まれていた
+（`system.job_run`、`system.pipelines.events`、`monitoring.table_updates`、
+`monitoring.data_quality`、`monitoring.mttr`、`audit_log`、`approved_changes` 等）。
+実際にこのワークスペースの `system` スキーマへ `DESCRIBE`/`SHOW TABLES` を実行して
+実在するテーブル・列を確認した上で、以下の方針で補正した。
+
+| 依頼時の記述 | 実際には | 補正内容 |
+| --- | --- | --- |
+| `system.lakeflow.jobs`（result_state列） | 実在しない列 | `system.lakeflow.job_run_timeline` / `job_task_run_timeline` を使用 |
+| `system.job_run` | 実在しないテーブル | `system.lakeflow.job_run_timeline` |
+| `system.pipelines.events` | 実在しないテーブル | `system.lakeflow.pipeline_update_timeline`（ただしmessage列が無いため、詳細調査には `event_log('<pipeline-id>')` を併用） |
+| `system.billing.usage.compute_resource_name` | 実在しない列 | `usage_metadata.warehouse_id` を `system.compute.warehouses`（実在）へJOIN |
+| `system.access.audit` でのSELECT/DELETE/UPDATE検知 | UC監査ログはメタデータ操作(createTable等)のみ記録し、行レベルDML(SELECT/DELETE/UPDATE文)は記録しない（実機のaction_name一覧で確認済み） | `system.query.history`（`statement_type`/`statement_text`）を使用 |
+| `monitoring.table_updates` | 実在しないテーブル | `system.access.table_lineage`（実在。UCのテーブル間リネージ追跡テーブル）の`event_time`で代用 |
+| `monitoring.data_quality` | 実在しないテーブル | 本パイプラインが実際に生成している `gold_data_quality_summary` で代用 |
+| `monitoring.mttr` | 実在しないテーブル | `system.lakeflow.job_run_timeline` から「最後のFAILEDから次のSUCCESSまでの時間」を算出して代用 |
+| `system.information_schema.tables` | 実在しない（information_schemaは各カタログ配下） | `<catalog>.information_schema.tables` |
+| テーブルサイズ(size_gb)の一覧化 | `information_schema.tables` にバイトサイズ列は無い | **未実装**。テーブルごとに`DESCRIBE DETAIL`を個別に叩く別ジョブが必要（本リポジトリの範囲外） |
+| `audit_log` ⋈ `approved_changes`（Jira突合） | 実在しない・Jira連携が必要 | **未実装**。No.22ダッシュボードは意図的に用意していない |
+
+### SQL Alert（11件、`resources/structured_monitoring_alerts.yml`）
+
+AlertV2として、`結果1行 × 条件を満たす件数 > 0` で統一的に評価する形にデプロイした
+（`evaluation.source`は結果の特定行しか評価できないため、複数行を返しうるクエリは
+「条件をWHERE/HAVINGへ焼き込んだ上でCOUNT(*)を1行返す」形に統一している）。
+既定では全アラートを`pause_status: PAUSED`にしてある（Free Edition/検証用ワークスペースで
+SQLウェアハウスが意図せず継続課金されないようにするため。動作確認後、必要なものだけ
+UNPAUSEDに変更すること）。11件のクエリはすべて実際にこのワークスペースの
+SQLウェアハウス上で実行し、SQLエラーが無いことを確認済み。実データに対しても、
+Freshness遅延（15分超）・品質エラー率(検疫率25%)・週次成功率(0%)・SLA超過(36分)・
+Retry検知・日次コスト急減(-76.85%)など、複数のアラートが実際に条件を満たして
+発火する状態になっていることを確認した（このワークスペースは検証で頻繁に手動実行・
+再処理を行っているため、成功率0%等は実運用上の異常ではなくこのセッション内の
+検証活動そのものを反映した値である点に注意）。
+
+### ダッシュボード（13件、`resources/structured_monitoring_dashboards.yml`）
+
+依頼のあった14種のうち13種を実装した（No.22「承認済みメンテナンス一覧との突合」は
+Jira等の変更管理ツール連携が本リポジトリの範囲外のため未実装）。各ダッシュボードは
+`monitoring/dashboards/*.lvdash.json`（Lakeview形式）を`file_path`で参照する形で
+実装し、実際にこのワークスペースへデプロイして13件すべてが `ACTIVE` 状態で作成され、
+背後のSQLもすべてエラー無く実行できることを確認済み。
+
+JSONファイルは手で書かず `monitoring/generate_dashboards.py` で生成する。
+**実機で遭遇した制約**: `resources.dashboards`の`file_path`が指す外部JSONファイルの
+中身に対しては、YAML側のフィールド（`warehouse_id`等）と違い `${var.catalog}` のような
+DABの変数展開が正しく機能しないことを確認した
+（`Error: invalid dependency "${var.catalog}", no such node ""`）。そのため
+catalog/schema/pipeline_idはこのスクリプトが値を確定させてからJSONへ書き出す方式にした
+（別環境へ展開する場合は同スクリプト内の定数を書き換えて再実行すること）。
+
+また、SLAダッシュボードのドリルダウン（「未達日をクリックすると失敗Job一覧へ遷移」）
+のようなインタラクティブ機能は、Lakeview UI側でのフィルタ/パラメータの追加設定が
+別途必要であり、JSON定義だけでは表現できない（実装していない）。
+
+### 障害調査用SQL（5件、`monitoring/investigations/*.sql`）
+
+`event_log('<pipeline-id>')`を使う調査クエリは実在のAPIのためほぼ原案通り。
+`processed_rows`という列は存在しない（正しくは`num_output_rows`）という依頼側の
+注記も実機のスキーマと一致することを確認済み。デプロイ日時との突合（#30）のみ、
+CI/CDのデプロイ実行ログという「システムテーブルとして単一の答えが無い」情報を
+扱うため、`system.access.audit`をサービスプリンシパルのアプリケーションIDで絞り込む
+方法と、GitHub Actions側の実行履歴（`gh run list`）を直接見る方法を併記した。
+
 ## 既知の制約（構造化データパイプライン）
 
+- **NULL評価される行は、正常系・検疫系のどちらからもサイレントに消え得る（実機で実際に遭遇・修正済み）**:
+  `ORDER_RULES`（`structured_common/quality_rules.py`）の `positive_amount` ルールを
+  当初 `"amount > 0"` と書いていたところ、`amount = NULL` の行が `silver_orders` にも
+  `silver_orders_quarantine` にも一切現れず、サイレントに消失することを実機で確認した。
+  このファイルには当初「Lakeflow ExpectationsはNULLを合格として扱うため、
+  NULLの行はsilver_ordersへ通る」という趣旨のコメントがあったが、これは誤りだった。
+  実際には `@dp.expect_all_or_drop` も、検疫側の `bronze.filter(~all_rules_pass)` も
+  「述語がNULLに評価される行を保持する」ではなく「除外する」という、SQLの
+  WHERE句・Sparkの `.filter()` に共通する3値論理の挙動を取る。つまり NULL は
+  silver_orders側からは「合格ではない」として、検疫側からは `~NULL` もNULLのため
+  「違反行ではない」として、**両方から除外される**。「正常系＋検疫系＝Bronzeの
+  全行」という検疫パターンの中核的な不変条件は、ルール対象列がNULLになり得る限り
+  保証されない。`order_id`（ルール自体が無かった）と`amount`（NULL非対応の式だった）の
+  双方でこの消失を実データで再現した後、`order_id_not_null` ルールの追加と
+  `"amount IS NOT NULL AND amount > 0"` へのNULL-safe化で修正し、
+  `--full-refresh` での全件再構築後に消失が解消されたことを確認済み
+  （詳細は「Expectationで実際に引っかかるサンプルデータ」セクション参照）。
+  同種の列（NULLになり得て、かつ検知したい）を追加する場合は、必ず
+  `IS NOT NULL AND ...` の形でルールを書くこと。
 - `dp.create_auto_cdc_flow` を含むため、特に `silver_customers` の SCD2
   出力形状（`__START_AT`/`__END_AT` 列名等）はPreview機能の仕様変更の影響を
   受ける可能性があります。RAGパイプライン側で判明した既存の制約

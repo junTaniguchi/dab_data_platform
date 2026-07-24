@@ -1,0 +1,79 @@
+{
+  "datasets": [
+    {
+      "name": "finops_ds",
+      "displayName": "finops_ds",
+      "queryLines": [
+        "-- project_nameがNULLの行が大きい場合、コスト以前にタグ付けの徹底が課題",
+        "-- （このワークスペースで実際に確認したところ custom_tags['project'] を",
+        "-- 設定していないため現状は全行NULLになる。運用開始前にタグ付けルールの",
+        "-- 整備が必要、という実際の発見）。",
+        "SELECT",
+        "  custom_tags['project'] AS project_name,",
+        "  SUM(usage_quantity) AS total_usage",
+        "FROM system.billing.usage",
+        "WHERE usage_date >= current_date() - 30",
+        "GROUP BY custom_tags['project']",
+        "ORDER BY total_usage DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "FinOps（コスト配賦）",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "finops_ds",
+                  "fields": [
+                    {
+                      "name": "project_name",
+                      "expression": "`project_name`"
+                    },
+                    {
+                      "name": "total_usage",
+                      "expression": "`total_usage`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "project_name",
+                    "displayName": "プロジェクト名"
+                  },
+                  {
+                    "fieldName": "total_usage",
+                    "displayName": "利用量"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "FinOps（コスト配賦）"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

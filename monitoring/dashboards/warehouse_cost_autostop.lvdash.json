@@ -1,0 +1,90 @@
+{
+  "datasets": [
+    {
+      "name": "warehouse_cost_ds",
+      "displayName": "warehouse_cost_ds",
+      "queryLines": [
+        "-- 【要求仕様からの補正】system.billing.usage に compute_resource_name という列は",
+        "-- 実在しない。usage_metadata.warehouse_id を system.compute.warehouses（実在）",
+        "-- へJOINしてWarehouse名を取得する。判断基準の「Auto Stopのタイムアウト設定を",
+        "-- 確認する」を別画面に頼らずこのクエリ自体にauto_stop_minutes列として含めた。",
+        "SELECT",
+        "  w.warehouse_name,",
+        "  w.auto_stop_minutes,",
+        "  SUM(u.usage_quantity) AS total_usage_7d",
+        "FROM system.billing.usage u",
+        "LEFT JOIN system.compute.warehouses w",
+        "  ON u.usage_metadata.warehouse_id = w.warehouse_id",
+        "WHERE u.usage_date >= current_date() - 7",
+        "GROUP BY w.warehouse_name, w.auto_stop_minutes",
+        "ORDER BY total_usage_7d DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "Warehouse別コスト＋Auto Stop設定",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "warehouse_cost_ds",
+                  "fields": [
+                    {
+                      "name": "warehouse_name",
+                      "expression": "`warehouse_name`"
+                    },
+                    {
+                      "name": "auto_stop_minutes",
+                      "expression": "`auto_stop_minutes`"
+                    },
+                    {
+                      "name": "total_usage_7d",
+                      "expression": "`total_usage_7d`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "warehouse_name",
+                    "displayName": "Warehouse名"
+                  },
+                  {
+                    "fieldName": "auto_stop_minutes",
+                    "displayName": "AutoStop(分)"
+                  },
+                  {
+                    "fieldName": "total_usage_7d",
+                    "displayName": "直近7日利用量"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Warehouse別コスト＋Auto Stop設定"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

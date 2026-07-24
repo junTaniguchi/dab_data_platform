@@ -37,20 +37,28 @@ BRONZE_CUSTOMER_WARN_RULES: dict[str, str] = {
 # Silver層（orders）: Drop + 検疫。ここに書いたキーが違反したルール名として
 # silver_orders_quarantine.violated_rules 配列にそのまま現れる。
 #
-# 【NULLの扱いに関する重要な注意】 Lakeflow Expectations は、述語がNULLと評価される
-# 行を「違反ではない（合格）」として扱う（SQLの3値論理でNULLは違反確定ではないため）。
-# 例えば "amount > 0" は amount が NULL の場合 NULL と評価され、
-# @dp.expect_all_or_drop はこれを Drop しない。silver_orders_quarantine.py の
-# 否定ロジック（~all_rules_pass）も同じNULL経路を辿るため、amount=NULLの行は
-# 「quarantineにも入らず、silver_ordersへ通る」という、Lakeflow標準の
-# Expectations と完全に一致した挙動になる（＝正常系・検疫系の合計が
-# bronze_ordersの全行に一致するという不変条件は、NULLケースでも壊れない）。
-# NULLそのものを異常として検知したい場合は、Bronze側のWarnルール
-# （BRONZE_ORDER_WARN_RULES の amount_present）で先に観測しているか確認するか、
-# ここのルール式自体を "amount IS NOT NULL AND amount > 0" のように明示すること。
+# 【実機で遭遇した落とし穴: NULL評価の行は正常系・検疫系のどちらにも入らず消える】
+# 当初 "amount > 0" のようにNULL非対応のルール式にしていたところ、
+# amount=NULL の行が silver_orders にも silver_orders_quarantine にも
+# 一切現れず、サイレントに消失することを実機で確認した
+# （このコメントは当初「NULLはLakeflow Expectationsにより合格扱いされ
+# silver_ordersへ通る」と誤って記載していたが、実際には
+# @dp.expect_all_or_drop も silver_orders_quarantine.py の
+# `bronze.filter(~all_rules_pass)` も、述語がNULLに評価される行を
+# 「保持する」ではなく「除外する」という、SQLのWHERE句・Sparkの.filter()に
+# 共通する3値論理の挙動を取る。つまり NULL は silver_orders 側からは
+# 「合格ではない」として、quarantine側からは `~NULL` もNULLのため
+# 「違反行ではない」として、**両方から除外される**。「正常系+検疫系
+# ＝Bronzeの全行」という本パイプラインが前提とする不変条件は、
+# ルール対象列がNULLになり得る限り保証されない）。
+# そのため、NULLを見逃したくない列を参照するルールは必ず
+# "amount IS NOT NULL AND amount > 0" のように明示的にNULLを弾く形で書く
+# （CUSTOMER_RULES の valid_email_format と同じ書き方）。
+# order_id_not_null / positive_amount はこの理由でNULL-safeにしている。
 ORDER_RULES: dict[str, str] = {
+    "order_id_not_null": "order_id IS NOT NULL",
     "customer_id_not_null": "customer_id IS NOT NULL",
-    "positive_amount": "amount > 0",
+    "positive_amount": "amount IS NOT NULL AND amount > 0",
     "order_date_not_future": "order_date <= current_date()",
     "valid_currency": "currency IN ('JPY', 'USD')",
 }

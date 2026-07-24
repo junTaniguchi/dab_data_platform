@@ -1,0 +1,98 @@
+{
+  "datasets": [
+    {
+      "name": "pipeline_stability_ds",
+      "displayName": "pipeline_stability_ds",
+      "queryLines": [
+        "-- 【要求仕様からの補正】system.pipelines.events は実在しない。",
+        "-- message列（エラー分類に必須）を持つのは event_log('<pipeline-id>') のみ",
+        "-- なので、本リポジトリの2本のパイプラインを対象にUNION ALLしている。",
+        "-- capacityはインフラ担当、governanceはガバナンス担当、dataはデータソース",
+        "-- 担当へエスカレーションする。",
+        "SELECT",
+        "  origin.pipeline_name,",
+        "  CASE",
+        "    WHEN message LIKE '%RESOURCE_EXHAUSTED%' THEN 'capacity'",
+        "    WHEN message LIKE '%permission%' THEN 'governance'",
+        "    WHEN message LIKE '%Schema%' THEN 'data'",
+        "    ELSE 'other'",
+        "  END AS error_category,",
+        "  COUNT(*) AS occurrences",
+        "FROM (",
+        "  SELECT * FROM event_log('b17663d1-bdcf-4423-9415-6d30ad190318')",
+        "  UNION ALL",
+        "  SELECT * FROM event_log('c0fda4ff-60aa-4cb0-aba6-ab00c2517e18')",
+        ")",
+        "WHERE level = 'ERROR'",
+        "GROUP BY origin.pipeline_name, error_category",
+        "ORDER BY occurrences DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "パイプライン安定性＋エラー分類",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "pipeline_stability_ds",
+                  "fields": [
+                    {
+                      "name": "pipeline_name",
+                      "expression": "`pipeline_name`"
+                    },
+                    {
+                      "name": "error_category",
+                      "expression": "`error_category`"
+                    },
+                    {
+                      "name": "occurrences",
+                      "expression": "`occurrences`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "pipeline_name",
+                    "displayName": "パイプライン名"
+                  },
+                  {
+                    "fieldName": "error_category",
+                    "displayName": "エラー分類"
+                  },
+                  {
+                    "fieldName": "occurrences",
+                    "displayName": "発生件数"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "パイプライン安定性＋エラー分類"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

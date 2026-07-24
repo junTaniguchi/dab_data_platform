@@ -1,0 +1,116 @@
+{
+  "datasets": [
+    {
+      "name": "query_health_ds",
+      "displayName": "query_health_ds",
+      "queryLines": [
+        "-- 平均だけだと極端に重いクエリに引っ張られるため中央値も併記する。",
+        "-- 【要求仕様からの補正】元のSQLはGROUP BYしつつread_bytesを非集計のまま",
+        "-- 参照しておりSQLとして不正だったため、SUM(read_bytes)に修正した。",
+        "-- あわせて『失敗率の把握』という運用目的に対しfailed_countが元案に",
+        "-- 無かったため追加した。",
+        "SELECT",
+        "  executed_by,",
+        "  ROUND(AVG(total_duration_ms)/1000, 2) AS avg_sec,",
+        "  ROUND(PERCENTILE(total_duration_ms, 0.5)/1000, 2) AS median_sec,",
+        "  ROUND(SUM(read_bytes)/POWER(1024,3), 3) AS gb_scanned,",
+        "  COUNT_IF(execution_status = 'FAILED') AS failed_count,",
+        "  COUNT(*) AS query_count",
+        "FROM system.query.history",
+        "WHERE start_time >= current_timestamp() - INTERVAL 1 DAY",
+        "GROUP BY executed_by",
+        "ORDER BY avg_sec DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "クエリの健康診断（中央値付き）",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "query_health_ds",
+                  "fields": [
+                    {
+                      "name": "executed_by",
+                      "expression": "`executed_by`"
+                    },
+                    {
+                      "name": "avg_sec",
+                      "expression": "`avg_sec`"
+                    },
+                    {
+                      "name": "median_sec",
+                      "expression": "`median_sec`"
+                    },
+                    {
+                      "name": "gb_scanned",
+                      "expression": "`gb_scanned`"
+                    },
+                    {
+                      "name": "failed_count",
+                      "expression": "`failed_count`"
+                    },
+                    {
+                      "name": "query_count",
+                      "expression": "`query_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "executed_by",
+                    "displayName": "実行者"
+                  },
+                  {
+                    "fieldName": "avg_sec",
+                    "displayName": "平均秒"
+                  },
+                  {
+                    "fieldName": "median_sec",
+                    "displayName": "中央値秒"
+                  },
+                  {
+                    "fieldName": "gb_scanned",
+                    "displayName": "スキャンGB"
+                  },
+                  {
+                    "fieldName": "failed_count",
+                    "displayName": "失敗数"
+                  },
+                  {
+                    "fieldName": "query_count",
+                    "displayName": "実行数"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "クエリの健康診断（中央値付き）"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

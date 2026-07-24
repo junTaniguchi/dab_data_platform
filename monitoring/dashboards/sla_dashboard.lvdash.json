@@ -1,0 +1,99 @@
+{
+  "datasets": [
+    {
+      "name": "sla_ds",
+      "displayName": "sla_ds",
+      "queryLines": [
+        "-- 【要求仕様からの補正】system.job_run は実在しないため",
+        "-- system.lakeflow.job_run_timeline を使う。",
+        "-- 単日の低下より複数日の下降トレンドを優先する。",
+        "-- 【既知の制約】「SLA未達日をクリックすると#1のJob一覧へ遷移」のような",
+        "-- ドリルダウンは、Lakeview UI上でこのダッシュボードにフィルタ/パラメータを",
+        "-- 手動で追加する必要がある（JSON定義だけでは表現しきれないインタラクティブ",
+        "-- 機能のため、UI側での追加設定が必要という制約として記載する）。",
+        "SELECT",
+        "  date_trunc('day', period_start_time) AS run_date,",
+        "  COUNT(*) AS total_runs,",
+        "  SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) <= 15 THEN 1 ELSE 0 END) AS sla_met,",
+        "  ROUND(SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) <= 15 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS sla_met_pct",
+        "FROM system.lakeflow.job_run_timeline",
+        "GROUP BY 1",
+        "ORDER BY 1 DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "SLAダッシュボード",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "sla_ds",
+                  "fields": [
+                    {
+                      "name": "run_date",
+                      "expression": "`run_date`"
+                    },
+                    {
+                      "name": "total_runs",
+                      "expression": "`total_runs`"
+                    },
+                    {
+                      "name": "sla_met",
+                      "expression": "`sla_met`"
+                    },
+                    {
+                      "name": "sla_met_pct",
+                      "expression": "`sla_met_pct`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "run_date",
+                    "displayName": "日付"
+                  },
+                  {
+                    "fieldName": "total_runs",
+                    "displayName": "総実行数"
+                  },
+                  {
+                    "fieldName": "sla_met",
+                    "displayName": "SLA達成数"
+                  },
+                  {
+                    "fieldName": "sla_met_pct",
+                    "displayName": "SLA達成率%"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "SLAダッシュボード"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,80 @@
+{
+  "datasets": [
+    {
+      "name": "lineage_ds",
+      "displayName": "lineage_ds",
+      "queryLines": [
+        "-- downstream_countが多いテーブルほど変更時の影響範囲が広く、",
+        "-- 事前周知や慎重なテストが必要。",
+        "-- 【要求仕様からの補正】単純なCOUNT(*)だと同一テーブルペアへの",
+        "-- 複数回の書き込みイベントを重複カウントしてしまうため、",
+        "-- COUNT(DISTINCT target_table_full_name)（重複排除した下流テーブル数）に",
+        "-- した方が『依存関係の広さ』という運用目的に対して正確。",
+        "SELECT",
+        "  source_table_full_name,",
+        "  COUNT(DISTINCT target_table_full_name) AS downstream_count",
+        "FROM system.access.table_lineage",
+        "GROUP BY source_table_full_name",
+        "ORDER BY downstream_count DESC"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "依存関係・リネージ・下流依存数",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "lineage_ds",
+                  "fields": [
+                    {
+                      "name": "source_table_full_name",
+                      "expression": "`source_table_full_name`"
+                    },
+                    {
+                      "name": "downstream_count",
+                      "expression": "`downstream_count`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "source_table_full_name",
+                    "displayName": "ソーステーブル"
+                  },
+                  {
+                    "fieldName": "downstream_count",
+                    "displayName": "下流テーブル数"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "依存関係・リネージ・下流依存数"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

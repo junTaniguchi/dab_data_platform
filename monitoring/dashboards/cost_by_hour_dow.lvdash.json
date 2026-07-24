@@ -1,0 +1,86 @@
+{
+  "datasets": [
+    {
+      "name": "cost_by_hour_dow_ds",
+      "displayName": "cost_by_hour_dow_ds",
+      "queryLines": [
+        "-- 深夜・早朝帯の消費は曜日別平均と比較し、特定曜日だけの異常か",
+        "-- 常態化した無駄かを見分ける。",
+        "SELECT",
+        "  HOUR(usage_start_time) AS hour,",
+        "  DAYOFWEEK(usage_date) AS dow,",
+        "  SUM(usage_quantity) AS total_usage",
+        "FROM system.billing.usage",
+        "WHERE usage_date >= current_date() - 28",
+        "GROUP BY hour, dow",
+        "ORDER BY dow, hour"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "name": "main",
+      "displayName": "時間帯別・曜日別コスト",
+      "layout": [
+        {
+          "widget": {
+            "name": "widget1",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost_by_hour_dow_ds",
+                  "fields": [
+                    {
+                      "name": "hour",
+                      "expression": "`hour`"
+                    },
+                    {
+                      "name": "dow",
+                      "expression": "`dow`"
+                    },
+                    {
+                      "name": "total_usage",
+                      "expression": "`total_usage`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "hour",
+                    "displayName": "時"
+                  },
+                  {
+                    "fieldName": "dow",
+                    "displayName": "曜日(1=日)"
+                  },
+                  {
+                    "fieldName": "total_usage",
+                    "displayName": "利用量"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "時間帯別・曜日別コスト"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}
