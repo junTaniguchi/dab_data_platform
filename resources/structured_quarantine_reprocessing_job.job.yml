@@ -1,0 +1,41 @@
+# 検疫（silver_orders_quarantine）の是正・再投入ジョブ。
+# structured_pipeline_etl とは独立したジョブとして定義する。
+# 理由: 検疫の是正は「壊れたデータが溜まったら都度／定期的に判断して回す」作業で、
+# 通常のETLスケジュールとは異なるタイミング・承認フローで実行したいことが多いため
+# （添付ガイドの「Quarantine処理フロー」参照: Quarantine -> Validation -> Correction
+# -> Reprocessing -> Expectation再評価）。
+#
+# 実行順序: このジョブ実行後、structured_pipeline_job（またはパイプラインの
+# 手動更新）をもう一度実行すると、再投入されたレコードが Bronze -> Silver の
+# Expectations 検証を通り、正しければ silver_orders / gold_* へ反映される。
+resources:
+  jobs:
+    structured_quarantine_reprocessing_job:
+      name: structured_quarantine_reprocessing_job
+
+      schedule:
+        quartz_cron_expression: "0 0 5 * * ?" # 毎日 05:00（ETL完了後を想定）
+        timezone_id: "Asia/Tokyo"
+        pause_status: PAUSED # 動作確認できたら UNPAUSED に変更する
+
+      tasks:
+        - task_key: reprocess_quarantine
+          spark_python_task:
+            python_file: ../src/structured_pipeline_etl/reprocessing/reprocess_quarantine.py
+            parameters:
+              - "--catalog"
+              - ${var.catalog}
+              - "--schema"
+              - ${resources.schemas.structured_schema.name}
+              - "--volume_path"
+              - /Volumes/${var.catalog}/${resources.schemas.structured_schema.name}/raw_structured_data
+              - "--src_root"
+              - ${workspace.file_path}/src/structured_pipeline_etl
+          environment_key: default
+
+      environments:
+        - environment_key: default
+          spec:
+            environment_version: "2"
+            dependencies:
+              - databricks-sdk>=0.40.0

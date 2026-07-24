@@ -1,0 +1,18 @@
+# governance/structured_governance.sql を SQL ウェアハウス上で適用するジョブ。
+# Owner設定、記述タグ付与、Row Filter / Column Mask を適用する。
+# ETL ジョブとは独立して、ガバナンス定義を変更した際に手動/CI から再実行する想定
+# （rag_abac_policies_job と同じ運用方針）。
+resources:
+  jobs:
+    structured_governance_job:
+      name: structured_governance_job
+
+      tasks:
+        - task_key: apply_structured_governance
+          sql_task:
+            warehouse_id: ${var.warehouse_id}
+            file:
+              path: ../governance/structured_governance.sql
+            parameters:
+              catalog: ${var.catalog}
+              schema: ${resources.schemas.structured_schema.name}

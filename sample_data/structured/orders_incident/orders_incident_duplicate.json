@@ -1,0 +1,1 @@
+{"order_id": "ORD1002", "customer_id": "CUST002", "order_date": "2025-01-11", "amount": 8500.0, "currency": "JPY", "payment_card_number": "5500005555555559", "status": "COMPLETED", "region": "nagoya", "unit_price": 4250.0, "discount_rate": 0.0, "source_system": "pos_retry", "ingestion_batch": "2025-01-11-nightly-retry"}

@@ -1,0 +1,24 @@
+# 構造化データ（customers/orders）メダリオン基盤が使う Unity Catalog の
+# スキーマ/ボリュームをバンドルで管理する。rag_unity_catalog.yml と同じ方針
+# （新規カタログは作らず、既存の管理カタログ配下にスキーマ/Volumeだけを作る）。
+#
+# RAG側と同じカタログを共有しつつ、スキーマは別（既定 sales）に分離している。
+# 業務ドメインが異なる（構造化な販売データ vs 非構造なドキュメント）ため、
+# 将来的にオーナー・アクセス権限を分けやすいようスキーマ単位で分離した。
+resources:
+  schemas:
+    structured_schema:
+      name: ${var.structured_schema}
+      catalog_name: ${var.catalog}
+      comment: 構造化データ（customers/orders）の Bronze/Silver/Gold テーブルを配置するスキーマ
+
+  volumes:
+    raw_structured_data_volume:
+      name: raw_structured_data
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.structured_schema.name}
+      volume_type: MANAGED
+      comment: >-
+        サンプル構造化データ（customers/*.csv, orders/*.json）を配置する Volume。
+        seed_structured_sample_data.py がここへアップロードし、
+        reprocess_quarantine.py が orders/reprocessed/ 配下へ是正済みレコードを再投入する。

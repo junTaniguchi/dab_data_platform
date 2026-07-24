@@ -1,0 +1,49 @@
+# Lakeflow Declarative Pipelines（Lakeflow SDP）による構造化データの Medallion 実装。
+# customers（CDC + SCD Type 2） / orders（検疫つき品質ゲート）を Bronze/Silver/Gold で処理する。
+#
+# rag_pipeline_etl.pipeline.yml と同じ構成方針を踏襲している
+# （serverless/photon、schema はリソース参照、__file__ が使えないため
+# spark.conf.get() 経由でソースルートを渡す等）。
+resources:
+  pipelines:
+    structured_pipeline_etl:
+      name: structured_pipeline_etl
+      catalog: ${var.catalog}
+      schema: ${resources.schemas.structured_schema.name}
+      serverless: true
+      photon: true
+      # NOTE: dp.create_auto_cdc_flow / dp.materialized_view 等、比較的新しい
+      # pyspark.pipelines APIを使用しているため、rag_pipeline_etl と同様
+      # channel: PREVIEW を使う。GA後は CURRENT への切り替えを検討すること。
+      channel: PREVIEW
+      development: true
+      continuous: false
+
+      libraries:
+        - glob:
+            include: ../src/structured_pipeline_etl/transformations/**
+
+      configuration:
+        raw_customers_path: /Volumes/${var.catalog}/${resources.schemas.structured_schema.name}/raw_structured_data/customers
+        raw_orders_path: /Volumes/${var.catalog}/${resources.schemas.structured_schema.name}/raw_structured_data/orders
+        pipeline.name: structured_pipeline_etl
+        # rag_pipeline_etl.pipeline.yml と同じ理由（Lakeflow Direct Publishingの
+        # 分離モジュール実行環境では __file__ が未定義）で、structured_common への
+        # 絶対パスを configuration 経由で渡す。
+        structured_src_root: ${workspace.file_path}/src/structured_pipeline_etl
+        # PII（クレジットカード番号・メールアドレス等）のハッシュ化に使うソルトを
+        # 保持する Secret Scope/Key の名前。値そのものはここに書かない。
+        # 事前に以下を実行しておくこと（README「Secretsの事前準備」参照）。
+        #   databricks secrets create-scope ${var.pii_hash_salt_secret_scope}
+        #   databricks secrets put-secret ${var.pii_hash_salt_secret_scope} ${var.pii_hash_salt_secret_key}
+        pii_hash_salt_secret_scope: ${var.pii_hash_salt_secret_scope}
+        pii_hash_salt_secret_key: ${var.pii_hash_salt_secret_key}
+
+      # 失敗時にメール通知したい場合は notifications ブロックを有効化すること
+      # （rag_pipeline_etl.pipeline.yml のコメント参照。空リストのままだと
+      # デプロイが失敗するため既定では外してある）。
+      # notifications:
+      #   - alerts:
+      #       - on-update-failure
+      #     email_recipients:
+      #       - you@example.com

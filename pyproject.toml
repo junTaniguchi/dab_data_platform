@@ -1,7 +1,7 @@
 [project]
-name = "rag-pipeline-etl"
+name = "dab-data-platform"
 version = "0.1.0"
-description = "RAG向けメダリオン基盤（Bronze/Silver/Gold, ABAC, Vector Search）の Lakeflow Declarative Pipelines 実装"
+description = "RAG向け・構造化データ向けメダリオン基盤（Bronze/Silver/Gold, ABAC, Row Filter/Column Mask, 検疫, Vector Search）の Lakeflow 実装"
 requires-python = ">=3.10"
 dependencies = [
     "databricks-sdk>=0.40.0",
@@ -16,7 +16,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src/rag_pipeline_etl"]
+# rag_pipeline_etl/common と structured_pipeline_etl/structured_common は
+# パッケージ名が異なる（common / structured_common）ため、両方を pythonpath に
+# 追加しても import の衝突は起きない。
+pythonpath = ["src/rag_pipeline_etl", "src/structured_pipeline_etl"]
 markers = [
     "integration: requires a deployed Databricks workspace (see tests/integration/test_pipeline_e2e.py)",
 ]

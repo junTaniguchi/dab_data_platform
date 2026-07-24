@@ -1,9 +1,13 @@
-# dab_data_platform — RAG向けメダリオン基盤（Bronze/Silver/Gold + Vector Search + ABAC）
+# dab_data_platform — RAG向け・構造化データ向けの2本立てメダリオン基盤
 #
 # Databricks Free Edition (workspace: dbc-a2d384f2-d156) 向けに作成した Databricks Asset Bundle。
+# 【RAGパイプライン（非構造化ドキュメント）】
 # STEP 01: Lakeflow Declarative Pipelines による Bronze/Silver/Gold ETL + ABAC ポリシー適用
 # STEP 02: Vector Search endpoint / index のバンドル宣言
 # STEP 05: Genie Space から参照する集計ビュー
+# 【構造化データパイプライン（customers/orders）】
+# Lakeflow SDP による Bronze/Silver/Gold + AUTO CDC(SCD2) + 検疫(Quarantine) +
+# Row Filter/Column Mask。詳細は README「構造化データパイプライン」セクション参照。
 bundle:
   name: dab_data_platform
 
@@ -36,6 +40,17 @@ variables:
   vector_search_endpoint:
     description: Vector Search endpoint 名
     default: rag_vector_search_endpoint
+  structured_schema:
+    description: 構造化データ（customers/orders）の Bronze/Silver/Gold テーブルを配置するスキーマ名
+    default: sales
+  pii_hash_salt_secret_scope:
+    description: >-
+      PII（メールアドレス・カード番号等）のハッシュ化ソルトを保持する Databricks Secret Scope 名。
+      事前に `databricks secrets create-scope <この値>` で作成しておくこと。値そのものはバンドルに書かない。
+    default: structured_pii
+  pii_hash_salt_secret_key:
+    description: 上記 Secret Scope 内の、ソルトを保持する key 名
+    default: hash_salt
 
 include:
   - resources/*.yml
@@ -55,6 +70,7 @@ targets:
       # 環境変数として設定して解決すること（README のセットアップ手順を参照）。
     variables:
       schema: rag_dev
+      structured_schema: sales_dev
 
   prod:
     mode: production
@@ -63,5 +79,6 @@ targets:
       # profile を固定しない理由は dev target 側のコメント参照
     variables:
       schema: rag
+      structured_schema: sales
     run_as:
       user_name: ${workspace.current_user.userName}

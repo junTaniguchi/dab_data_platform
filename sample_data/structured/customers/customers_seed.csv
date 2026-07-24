@@ -1,0 +1,9 @@
+customer_id,name,email,phone,address,birth_date,region,status,operation,updated_at,source_system
+CUST001,Aiko Tanaka,aiko.tanaka@example.com,090-1111-2222,"1-2-3 Shibuya, Tokyo",1988-04-12,tokyo,ACTIVE,INSERT,2025-01-05T09:00:00,crm
+CUST001,Aiko Tanaka,aiko.tanaka@example.com,090-1111-2222,"4-5-6 Umeda, Osaka",1988-04-12,osaka,ACTIVE,UPDATE,2025-01-20T10:30:00,crm
+CUST001,Aiko Tanaka,aiko.tanaka@example.com,090-1111-2222,"1-2-3 Shibuya, Tokyo",1988-04-12,tokyo,ACTIVE,UPDATE,2025-01-15T08:00:00,crm
+CUST002,Kenji Sato,kenji.sato@example.com,080-3333-4444,"7-8-9 Sakae, Nagoya",1975-11-30,nagoya,ACTIVE,INSERT,2025-01-06T09:15:00,crm
+CUST002,Kenji Sato,kenji.sato@example.com,080-3333-4444,"7-8-9 Sakae, Nagoya",1975-11-30,nagoya,CHURNED,DELETE,2025-02-10T17:45:00,crm
+CUST003,Yuki Yamamoto,yuki.yamamoto.example.com,070-5555-6666,"10-11 Chuo, Fukuoka",1992-06-15,fukuoka,ACTIVE,INSERT,2025-01-07T11:20:00,crm
+CUST004,Haruto Suzuki,haruto.suzuki@example.com,090-7777-8888,"2-2 Kita, Sapporo",1983-09-01,sapporo,ACTIVE,INSERT,2025-01-08T13:40:00,crm
+CUST005,Mio Kobayashi,mio.kobayashi@example.com,080-9999-0000,"3-3 Naka, Yokohama",1995-12-24,tokyo,ACTIVE,INSERT,2025-01-09T14:10:00,crm
