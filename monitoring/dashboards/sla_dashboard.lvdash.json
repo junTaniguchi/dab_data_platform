@@ -4,21 +4,7 @@
       "name": "sla_ds",
       "displayName": "sla_ds",
       "queryLines": [
-        "-- 【要求仕様からの補正】system.job_run は実在しないため",
-        "-- system.lakeflow.job_run_timeline を使う。",
-        "-- 単日の低下より複数日の下降トレンドを優先する。",
-        "-- 【既知の制約】「SLA未達日をクリックすると#1のJob一覧へ遷移」のような",
-        "-- ドリルダウンは、Lakeview UI上でこのダッシュボードにフィルタ/パラメータを",
-        "-- 手動で追加する必要がある（JSON定義だけでは表現しきれないインタラクティブ",
-        "-- 機能のため、UI側での追加設定が必要という制約として記載する）。",
-        "SELECT",
-        "  date_trunc('day', period_start_time) AS run_date,",
-        "  COUNT(*) AS total_runs,",
-        "  SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) <= 15 THEN 1 ELSE 0 END) AS sla_met,",
-        "  ROUND(SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) <= 15 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS sla_met_pct",
-        "FROM system.lakeflow.job_run_timeline",
-        "GROUP BY 1",
-        "ORDER BY 1 DESC"
+        "-- 【要求仕様からの補正】system.job_run は実在しないため\n-- system.lakeflow.job_run_timeline を使う。\n-- 単日の低下より複数日の下降トレンドを優先する。\n-- 【既知の制約】「SLA未達日をクリックすると#1のJob一覧へ遷移」のような\n-- ドリルダウンは、Lakeview UI上でこのダッシュボードにフィルタ/パラメータを\n-- 手動で追加する必要がある（JSON定義だけでは表現しきれないインタラクティブ\n-- 機能のため、UI側での追加設定が必要という制約として記載する）。\nSELECT\n  date_trunc('day', period_start_time) AS run_date,\n  COUNT(*) AS total_runs,\n  SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) <= 15 THEN 1 ELSE 0 END) AS sla_met,\n  ROUND(SUM(CASE WHEN TIMESTAMPDIFF(MINUTE, period_start_time, period_end_time) <= 15 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) AS sla_met_pct\nFROM system.lakeflow.job_run_timeline\nGROUP BY 1\nORDER BY 1 DESC"
       ]
     }
   ],
@@ -26,6 +12,7 @@
     {
       "name": "main",
       "displayName": "SLAダッシュボード",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -58,27 +45,38 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "run_date",
-                    "displayName": "日付"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "日付"
                   },
                   {
                     "fieldName": "total_runs",
-                    "displayName": "総実行数"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "総実行数"
                   },
                   {
                     "fieldName": "sla_met",
-                    "displayName": "SLA達成数"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "SLA達成数"
                   },
                   {
                     "fieldName": "sla_met_pct",
-                    "displayName": "SLA達成率%"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "SLA達成率%"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,

@@ -972,6 +972,35 @@ catalog/schema/pipeline_idはこのスクリプトが値を確定させてから
 のようなインタラクティブ機能は、Lakeview UI側でのフィルタ/パラメータの追加設定が
 別途必要であり、JSON定義だけでは表現できない（実装していない）。
 
+**実機で遭遇した追加の制約（`Unable to render visualization`）**: デプロイ直後は
+13件すべて `ACTIVE` になり背後のSQLも実行できるにもかかわらず、実際にダッシュボードを
+開くと `Unable to render visualization` と表示され描画されない現象が発生した。原因は2つ
+複合していた。
+
+1. `queryLines` を「1行1要素」のJSON配列のまま渡すと、`databricks bundle deploy`
+   （CLI v1.9.0）が配列要素を改行なしで連結してしまい、`--`コメント行が後続の
+   `SELECT`文まで飲み込んで空文になる（`[PARSE_EMPTY_STATEMENT]`）。
+   `generate_dashboards.py`側で`"\n".join()`して改行を実際の文字として埋め込んだ
+   単一要素の配列にすることで回避した。
+2. tableウィジェットの`spec`には`version: 2`と`data.queryName: "main_query"`
+   （`widget.queries[].name`と一致させる）が必要で、これが無いと
+   `Visualization has no fields selected.`と表示され描画されない。Lakeview UI上で
+   実際にビジュアライゼーションを選び直しフィールドを選択して保存したときに
+   生成されるJSONと比較して特定した。
+
+さらに、`databricks bundle deploy`はダッシュボードの**下書き(draft)**を更新するだけで、
+実際に閲覧される**公開版(published)**のリビジョンを正しく再生成しない場合があることを
+確認した（`resources.dashboards.*.state.published: true`という表示にもかかわらず）。
+そのため、bundle deploy後は各ダッシュボードに対して明示的に公開APIを呼ぶ必要がある:
+
+```bash
+databricks api post "/api/2.0/lakeview/dashboards/<dashboard_id>/published" \
+  --profile <profile> --json '{"embed_credentials": false, "warehouse_id": "<warehouse_id>"}'
+```
+
+（`<dashboard_id>`は`.databricks/bundle/dev/resources.json`の
+`state.resources.dashboards.<name>.__id__`で確認できる。）
+
 ### 障害調査用SQL（5件、`monitoring/investigations/*.sql`）
 
 `event_log('<pipeline-id>')`を使う調査クエリは実在のAPIのためほぼ原案通り。

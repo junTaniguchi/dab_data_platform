@@ -4,17 +4,7 @@
       "name": "finops_ds",
       "displayName": "finops_ds",
       "queryLines": [
-        "-- project_nameがNULLの行が大きい場合、コスト以前にタグ付けの徹底が課題",
-        "-- （このワークスペースで実際に確認したところ custom_tags['project'] を",
-        "-- 設定していないため現状は全行NULLになる。運用開始前にタグ付けルールの",
-        "-- 整備が必要、という実際の発見）。",
-        "SELECT",
-        "  custom_tags['project'] AS project_name,",
-        "  SUM(usage_quantity) AS total_usage",
-        "FROM system.billing.usage",
-        "WHERE usage_date >= current_date() - 30",
-        "GROUP BY custom_tags['project']",
-        "ORDER BY total_usage DESC"
+        "-- project_nameがNULLの行が大きい場合、コスト以前にタグ付けの徹底が課題\n-- （このワークスペースで実際に確認したところ custom_tags['project'] を\n-- 設定していないため現状は全行NULLになる。運用開始前にタグ付けルールの\n-- 整備が必要、という実際の発見）。\nSELECT\n  custom_tags['project'] AS project_name,\n  SUM(usage_quantity) AS total_usage\nFROM system.billing.usage\nWHERE usage_date >= current_date() - 30\nGROUP BY custom_tags['project']\nORDER BY total_usage DESC"
       ]
     }
   ],
@@ -22,6 +12,7 @@
     {
       "name": "main",
       "displayName": "FinOps（コスト配賦）",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -46,19 +37,26 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "project_name",
-                    "displayName": "プロジェクト名"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "プロジェクト名"
                   },
                   {
                     "fieldName": "total_usage",
-                    "displayName": "利用量"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "利用量"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,

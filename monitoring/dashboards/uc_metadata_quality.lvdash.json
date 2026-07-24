@@ -4,18 +4,7 @@
       "name": "uc_metadata_quality_ds",
       "displayName": "uc_metadata_quality_ds",
       "queryLines": [
-        "-- 【要求仕様からの補正】system.information_schema.tables は実在しない",
-        "-- （information_schemaは system カタログ配下ではなく、各カタログ配下に",
-        "-- 存在する。実機の DESCRIBE で確認済み）。",
-        "-- 対象カタログを workspace に固定して workspace.information_schema.tables を使う。",
-        "-- 絶対値より週ごとの推移を見る。低下傾向はテーブル追加にドキュメント整備が",
-        "-- 追いついていないサイン。",
-        "SELECT",
-        "  ROUND(COUNT_IF(comment IS NOT NULL) * 100.0 / COUNT(*), 2) AS comment_rate_pct,",
-        "  ROUND(COUNT_IF(table_owner IS NOT NULL) * 100.0 / COUNT(*), 2) AS owner_rate_pct,",
-        "  COUNT(*) AS total_tables",
-        "FROM workspace.information_schema.tables",
-        "WHERE table_schema != 'information_schema'"
+        "-- 【要求仕様からの補正】system.information_schema.tables は実在しない\n-- （information_schemaは system カタログ配下ではなく、各カタログ配下に\n-- 存在する。実機の DESCRIBE で確認済み）。\n-- 対象カタログを workspace に固定して workspace.information_schema.tables を使う。\n-- 絶対値より週ごとの推移を見る。低下傾向はテーブル追加にドキュメント整備が\n-- 追いついていないサイン。\nSELECT\n  ROUND(COUNT_IF(comment IS NOT NULL) * 100.0 / COUNT(*), 2) AS comment_rate_pct,\n  ROUND(COUNT_IF(table_owner IS NOT NULL) * 100.0 / COUNT(*), 2) AS owner_rate_pct,\n  COUNT(*) AS total_tables\nFROM workspace.information_schema.tables\nWHERE table_schema != 'information_schema'"
       ]
     }
   ],
@@ -23,6 +12,7 @@
     {
       "name": "main",
       "displayName": "Unity Catalog品質（コメント・タグ・Owner）",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -51,23 +41,32 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "comment_rate_pct",
-                    "displayName": "コメント充足率%"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "コメント充足率%"
                   },
                   {
                     "fieldName": "owner_rate_pct",
-                    "displayName": "Owner充足率%"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "Owner充足率%"
                   },
                   {
                     "fieldName": "total_tables",
-                    "displayName": "対象テーブル数"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "対象テーブル数"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,

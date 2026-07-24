@@ -4,29 +4,7 @@
       "name": "unused_table_ds",
       "displayName": "unused_table_ds",
       "queryLines": [
-        "-- 【要求仕様からの補正】2点補正している。",
-        "-- (1) information_schema.tables に size_gb にあたる列（バイトサイズ）は",
-        "--     存在しない。テーブルごとのサイズはDESCRIBE DETAILを個別に叩く必要が",
-        "--     あり、1本のSQLでは取得できない（本リポジトリでは未実装。将来的に",
-        "--     全テーブルを列挙してDESCRIBE DETAILする別ジョブが必要）。",
-        "-- (2) 最終アクセス時刻は system.access.audit ではなく",
-        "--     system.access.table_lineage（実在。UCのテーブル間リネージを",
-        "--     追跡するsystem table）の event_time を使う方が正確。",
-        "-- size_gbが取得できるようになった際は、大きいテーブルほど優先度を上げる。",
-        "-- 削除前には利用部門への確認が必須。",
-        "SELECT",
-        "  t.table_catalog,",
-        "  t.table_schema,",
-        "  t.table_name,",
-        "  a.last_access",
-        "FROM workspace.information_schema.tables t",
-        "LEFT JOIN (",
-        "  SELECT target_table_full_name, MAX(event_time) AS last_access",
-        "  FROM system.access.table_lineage",
-        "  GROUP BY target_table_full_name",
-        ") a",
-        "  ON CONCAT(t.table_catalog, '.', t.table_schema, '.', t.table_name) = a.target_table_full_name",
-        "WHERE a.last_access < current_date() - INTERVAL 90 DAYS OR a.last_access IS NULL"
+        "-- 【要求仕様からの補正】2点補正している。\n-- (1) information_schema.tables に size_gb にあたる列（バイトサイズ）は\n--     存在しない。テーブルごとのサイズはDESCRIBE DETAILを個別に叩く必要が\n--     あり、1本のSQLでは取得できない（本リポジトリでは未実装。将来的に\n--     全テーブルを列挙してDESCRIBE DETAILする別ジョブが必要）。\n-- (2) 最終アクセス時刻は system.access.audit ではなく\n--     system.access.table_lineage（実在。UCのテーブル間リネージを\n--     追跡するsystem table）の event_time を使う方が正確。\n-- size_gbが取得できるようになった際は、大きいテーブルほど優先度を上げる。\n-- 削除前には利用部門への確認が必須。\nSELECT\n  t.table_catalog,\n  t.table_schema,\n  t.table_name,\n  a.last_access\nFROM workspace.information_schema.tables t\nLEFT JOIN (\n  SELECT target_table_full_name, MAX(event_time) AS last_access\n  FROM system.access.table_lineage\n  GROUP BY target_table_full_name\n) a\n  ON CONCAT(t.table_catalog, '.', t.table_schema, '.', t.table_name) = a.target_table_full_name\nWHERE a.last_access < current_date() - INTERVAL 90 DAYS OR a.last_access IS NULL"
       ]
     }
   ],
@@ -34,6 +12,7 @@
     {
       "name": "main",
       "displayName": "未使用データ・テーブルサイズの棚卸し",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -66,27 +45,38 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "table_catalog",
-                    "displayName": "カタログ"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "カタログ"
                   },
                   {
                     "fieldName": "table_schema",
-                    "displayName": "スキーマ"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "スキーマ"
                   },
                   {
                     "fieldName": "table_name",
-                    "displayName": "テーブル名"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "テーブル名"
                   },
                   {
                     "fieldName": "last_access",
-                    "displayName": "最終アクセス"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "最終アクセス"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,

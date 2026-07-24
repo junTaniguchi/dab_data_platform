@@ -4,22 +4,7 @@
       "name": "query_health_ds",
       "displayName": "query_health_ds",
       "queryLines": [
-        "-- 平均だけだと極端に重いクエリに引っ張られるため中央値も併記する。",
-        "-- 【要求仕様からの補正】元のSQLはGROUP BYしつつread_bytesを非集計のまま",
-        "-- 参照しておりSQLとして不正だったため、SUM(read_bytes)に修正した。",
-        "-- あわせて『失敗率の把握』という運用目的に対しfailed_countが元案に",
-        "-- 無かったため追加した。",
-        "SELECT",
-        "  executed_by,",
-        "  ROUND(AVG(total_duration_ms)/1000, 2) AS avg_sec,",
-        "  ROUND(PERCENTILE(total_duration_ms, 0.5)/1000, 2) AS median_sec,",
-        "  ROUND(SUM(read_bytes)/POWER(1024,3), 3) AS gb_scanned,",
-        "  COUNT_IF(execution_status = 'FAILED') AS failed_count,",
-        "  COUNT(*) AS query_count",
-        "FROM system.query.history",
-        "WHERE start_time >= current_timestamp() - INTERVAL 1 DAY",
-        "GROUP BY executed_by",
-        "ORDER BY avg_sec DESC"
+        "-- 平均だけだと極端に重いクエリに引っ張られるため中央値も併記する。\n-- 【要求仕様からの補正】元のSQLはGROUP BYしつつread_bytesを非集計のまま\n-- 参照しておりSQLとして不正だったため、SUM(read_bytes)に修正した。\n-- あわせて『失敗率の把握』という運用目的に対しfailed_countが元案に\n-- 無かったため追加した。\nSELECT\n  executed_by,\n  ROUND(AVG(total_duration_ms)/1000, 2) AS avg_sec,\n  ROUND(PERCENTILE(total_duration_ms, 0.5)/1000, 2) AS median_sec,\n  ROUND(SUM(read_bytes)/POWER(1024,3), 3) AS gb_scanned,\n  COUNT_IF(execution_status = 'FAILED') AS failed_count,\n  COUNT(*) AS query_count\nFROM system.query.history\nWHERE start_time >= current_timestamp() - INTERVAL 1 DAY\nGROUP BY executed_by\nORDER BY avg_sec DESC"
       ]
     }
   ],
@@ -27,6 +12,7 @@
     {
       "name": "main",
       "displayName": "クエリの健康診断（中央値付き）",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -67,35 +53,50 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "executed_by",
-                    "displayName": "実行者"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "実行者"
                   },
                   {
                     "fieldName": "avg_sec",
-                    "displayName": "平均秒"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "平均秒"
                   },
                   {
                     "fieldName": "median_sec",
-                    "displayName": "中央値秒"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "中央値秒"
                   },
                   {
                     "fieldName": "gb_scanned",
-                    "displayName": "スキャンGB"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "スキャンGB"
                   },
                   {
                     "fieldName": "failed_count",
-                    "displayName": "失敗数"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "失敗数"
                   },
                   {
                     "fieldName": "query_count",
-                    "displayName": "実行数"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "実行数"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,

@@ -4,18 +4,7 @@
       "name": "lineage_ds",
       "displayName": "lineage_ds",
       "queryLines": [
-        "-- downstream_countが多いテーブルほど変更時の影響範囲が広く、",
-        "-- 事前周知や慎重なテストが必要。",
-        "-- 【要求仕様からの補正】単純なCOUNT(*)だと同一テーブルペアへの",
-        "-- 複数回の書き込みイベントを重複カウントしてしまうため、",
-        "-- COUNT(DISTINCT target_table_full_name)（重複排除した下流テーブル数）に",
-        "-- した方が『依存関係の広さ』という運用目的に対して正確。",
-        "SELECT",
-        "  source_table_full_name,",
-        "  COUNT(DISTINCT target_table_full_name) AS downstream_count",
-        "FROM system.access.table_lineage",
-        "GROUP BY source_table_full_name",
-        "ORDER BY downstream_count DESC"
+        "-- downstream_countが多いテーブルほど変更時の影響範囲が広く、\n-- 事前周知や慎重なテストが必要。\n-- 【要求仕様からの補正】単純なCOUNT(*)だと同一テーブルペアへの\n-- 複数回の書き込みイベントを重複カウントしてしまうため、\n-- COUNT(DISTINCT target_table_full_name)（重複排除した下流テーブル数）に\n-- した方が『依存関係の広さ』という運用目的に対して正確。\nSELECT\n  source_table_full_name,\n  COUNT(DISTINCT target_table_full_name) AS downstream_count\nFROM system.access.table_lineage\nGROUP BY source_table_full_name\nORDER BY downstream_count DESC"
       ]
     }
   ],
@@ -23,6 +12,7 @@
     {
       "name": "main",
       "displayName": "依存関係・リネージ・下流依存数",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -47,19 +37,26 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "source_table_full_name",
-                    "displayName": "ソーステーブル"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "ソーステーブル"
                   },
                   {
                     "fieldName": "downstream_count",
-                    "displayName": "下流テーブル数"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "下流テーブル数"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,

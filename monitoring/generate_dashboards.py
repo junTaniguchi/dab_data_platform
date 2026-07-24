@@ -39,17 +39,49 @@ OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "dashboards")
 def make_dashboard(display_name, dataset_name, query_lines, columns):
     """1データセット・1テーブルウィジェットだけのシンプルなLakeviewダッシュボードを組み立てる。
     columns: [(fieldName, displayName), ...]（SELECTの列順と一致させること）
+
+    【修正1・本質的な原因】queryLinesを「1行1要素」のJSON配列のまま
+    `databricks bundle deploy`（CLI v1.9.0）に渡すと、配列要素が改行なしで
+    そのまま連結されてしまうことを実機で確認した（例: "-- コメント" の直後に
+    改行なしで次の行が続き、`--`コメントが以降の SELECT 文まで全て飲み込んで
+    しまい、ダッシュボード上で [PARSE_EMPTY_STATEMENT]/[PARSE_SYNTAX_ERROR]
+    => 「Unable to render visualization」になる）。そのため、ここで
+    "\\n".join() して改行を実際の文字として埋め込んだ単一要素の配列にしてから
+    queryLines へ渡す（配列の要素境界に改行挿入を期待しない）。
+
+    【修正2・本質的な原因】widgetType "table" の spec には、Lakeview上で
+    実際にUIから「Table」を選び直しフィールドを選択し直して保存したときに
+    生成される正しい形が必要で、それは
+      spec.version: 2
+      spec.encodings.columns[]: {"fieldName": ..., "title": ...} のみで十分
+      spec.data.queryName: "main_query" (widget.queries[].name と一致させる)
+    という組み合わせだった。旧実装では version: 1/3 や type/displayAs等の
+    大量の付随キーを試したが、実際に効いていたのは
+    「spec.data.queryName で widget.queries[].name を明示的に紐付けること」
+    であり、これが欠けていると（version値やcolumnsの中身に関わらず）実機で
+    「Visualization has no fields selected.」と表示されて描画されないことを
+    UI操作結果とAPI応答の差分比較で特定した。
     """
+    query_text = "\n".join(query_lines)
     fields = [{"name": c[0], "expression": f"`{c[0]}`"} for c in columns]
-    encodings_columns = [{"fieldName": c[0], "displayName": c[1]} for c in columns]
+    encodings_columns = [
+        {
+            "fieldName": c[0],
+            "type": "string",
+            "displayAs": "string",
+            "title": c[1],
+        }
+        for c in columns
+    ]
     return {
         "datasets": [
-            {"name": dataset_name, "displayName": dataset_name, "queryLines": query_lines}
+            {"name": dataset_name, "displayName": dataset_name, "queryLines": [query_text]}
         ],
         "pages": [
             {
                 "name": "main",
                 "displayName": display_name,
+                "pageType": "PAGE_TYPE_CANVAS",
                 "layout": [
                     {
                         "widget": {
@@ -65,9 +97,10 @@ def make_dashboard(display_name, dataset_name, query_lines, columns):
                                 }
                             ],
                             "spec": {
-                                "version": 3,
+                                "version": 2,
                                 "widgetType": "table",
                                 "encodings": {"columns": encodings_columns},
+                                "data": {"queryName": "main_query"},
                                 "frame": {"showTitle": True, "title": display_name},
                             },
                         },

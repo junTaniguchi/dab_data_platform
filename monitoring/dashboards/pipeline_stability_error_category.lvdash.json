@@ -4,28 +4,7 @@
       "name": "pipeline_stability_ds",
       "displayName": "pipeline_stability_ds",
       "queryLines": [
-        "-- 【要求仕様からの補正】system.pipelines.events は実在しない。",
-        "-- message列（エラー分類に必須）を持つのは event_log('<pipeline-id>') のみ",
-        "-- なので、本リポジトリの2本のパイプラインを対象にUNION ALLしている。",
-        "-- capacityはインフラ担当、governanceはガバナンス担当、dataはデータソース",
-        "-- 担当へエスカレーションする。",
-        "SELECT",
-        "  origin.pipeline_name,",
-        "  CASE",
-        "    WHEN message LIKE '%RESOURCE_EXHAUSTED%' THEN 'capacity'",
-        "    WHEN message LIKE '%permission%' THEN 'governance'",
-        "    WHEN message LIKE '%Schema%' THEN 'data'",
-        "    ELSE 'other'",
-        "  END AS error_category,",
-        "  COUNT(*) AS occurrences",
-        "FROM (",
-        "  SELECT * FROM event_log('b17663d1-bdcf-4423-9415-6d30ad190318')",
-        "  UNION ALL",
-        "  SELECT * FROM event_log('c0fda4ff-60aa-4cb0-aba6-ab00c2517e18')",
-        ")",
-        "WHERE level = 'ERROR'",
-        "GROUP BY origin.pipeline_name, error_category",
-        "ORDER BY occurrences DESC"
+        "-- 【要求仕様からの補正】system.pipelines.events は実在しない。\n-- message列（エラー分類に必須）を持つのは event_log('<pipeline-id>') のみ\n-- なので、本リポジトリの2本のパイプラインを対象にUNION ALLしている。\n-- capacityはインフラ担当、governanceはガバナンス担当、dataはデータソース\n-- 担当へエスカレーションする。\nSELECT\n  origin.pipeline_name,\n  CASE\n    WHEN message LIKE '%RESOURCE_EXHAUSTED%' THEN 'capacity'\n    WHEN message LIKE '%permission%' THEN 'governance'\n    WHEN message LIKE '%Schema%' THEN 'data'\n    ELSE 'other'\n  END AS error_category,\n  COUNT(*) AS occurrences\nFROM (\n  SELECT * FROM event_log('b17663d1-bdcf-4423-9415-6d30ad190318')\n  UNION ALL\n  SELECT * FROM event_log('c0fda4ff-60aa-4cb0-aba6-ab00c2517e18')\n)\nWHERE level = 'ERROR'\nGROUP BY origin.pipeline_name, error_category\nORDER BY occurrences DESC"
       ]
     }
   ],
@@ -33,6 +12,7 @@
     {
       "name": "main",
       "displayName": "パイプライン安定性＋エラー分類",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -61,23 +41,32 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "pipeline_name",
-                    "displayName": "パイプライン名"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "パイプライン名"
                   },
                   {
                     "fieldName": "error_category",
-                    "displayName": "エラー分類"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "エラー分類"
                   },
                   {
                     "fieldName": "occurrences",
-                    "displayName": "発生件数"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "発生件数"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,

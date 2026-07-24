@@ -4,15 +4,7 @@
       "name": "cost_per_user_ds",
       "displayName": "cost_per_user_ds",
       "queryLines": [
-        "-- system.billing.usage はコンピュート単位の集計であり個人には直接紐づかないため、",
-        "-- 実行時間ベースの近似値として見る。",
-        "SELECT",
-        "  executed_by,",
-        "  SUM(total_duration_ms) AS total_ms",
-        "FROM system.query.history",
-        "WHERE start_time >= current_date() - 7",
-        "GROUP BY executed_by",
-        "ORDER BY total_ms DESC"
+        "-- system.billing.usage はコンピュート単位の集計であり個人には直接紐づかないため、\n-- 実行時間ベースの近似値として見る。\nSELECT\n  executed_by,\n  SUM(total_duration_ms) AS total_ms\nFROM system.query.history\nWHERE start_time >= current_date() - 7\nGROUP BY executed_by\nORDER BY total_ms DESC"
       ]
     }
   ],
@@ -20,6 +12,7 @@
     {
       "name": "main",
       "displayName": "Cost/User（概算）",
+      "pageType": "PAGE_TYPE_CANVAS",
       "layout": [
         {
           "widget": {
@@ -44,19 +37,26 @@
               }
             ],
             "spec": {
-              "version": 3,
+              "version": 2,
               "widgetType": "table",
               "encodings": {
                 "columns": [
                   {
                     "fieldName": "executed_by",
-                    "displayName": "実行者"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "実行者"
                   },
                   {
                     "fieldName": "total_ms",
-                    "displayName": "累計実行時間(ms)"
+                    "type": "string",
+                    "displayAs": "string",
+                    "title": "累計実行時間(ms)"
                   }
                 ]
+              },
+              "data": {
+                "queryName": "main_query"
               },
               "frame": {
                 "showTitle": true,
