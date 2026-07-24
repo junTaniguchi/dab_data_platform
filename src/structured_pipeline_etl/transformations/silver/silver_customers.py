@@ -9,7 +9,8 @@
 #   - Deletion Vectors : 有効化（SCD2運用ではUPDATE/DELETEが頻発するため必須。
 #                        Deletion Vectorsを使うと、ファイル全体を書き直さずに
 #                        「この行は削除済み」というビットマップだけを追加できる）
-#   - Expectation      : Drop（silver_customers_cleaned の時点で無効データを除外）
+#   - Expectation      : Drop（bronze_customers_validated の時点で無効データを除外。
+#                        理由は下記「実機で遭遇した落とし穴」を参照）
 #   - 保持期間          : 90〜180日
 #   - 匿名化            : email→ハッシュ化、phone→部分マスク、birth_date→年のみ一般化、
 #                        address→地域(region)レベルへ一般化（番地情報は保持しない）
@@ -20,7 +21,7 @@
 # 適用できるが、本サンプルでは意図的に「Dropだけで検疫を用意しない場合、何が起きるか」
 # の悪い例として customers を残している。
 # サンプルデータの CUST003 は不正なメール形式（"yuki.yamamoto.example.com"）を持ち、
-# valid_email_format ルールに違反して silver_customers_cleaned で Drop される。
+# valid_email_format ルールに違反して bronze_customers_validated で Drop される。
 # その結果 CUST003 は Silver 以降のどのテーブルにも一切現れず、跡形もなく消える。
 # 検疫を用意していれば「なぜCUST003が消えたか」を silver_customers_quarantine から
 # 追跡できたはずである。実運用でこの挙動が許容できない場合は、
@@ -40,6 +41,23 @@
 # 防ぐための単一の情報源」という共有化のメリットが無い。そのため、あえて
 # structured_common.quality_rules.CUSTOMER_RULES と同じ内容をこのファイル内に
 # 直接定義し、import・sys.path操作を避けている。
+#
+# 【実機で遭遇した落とし穴: Expectationsは「関数の戻り値の列」に対して評価される】
+# 当初は1つの関数（silver_customers_cleaned）の中で「CUSTOMER_RULESでの検証」と
+# 「PII匿名化（email→email_hash へのrename等）」を同時に行っていた。実際に
+# デプロイすると `[UNRESOLVED_COLUMN.WITH_SUGGESTION] A column ... 'email' cannot
+# be resolved. Did you mean ... email_hash` で失敗した。
+# 理由: `@dp.expect_all_or_drop(CUSTOMER_RULES)` は、デコレートした関数が
+# **返すDataFrameの列**に対して述語を評価する。関数内で `.select(...)` により
+# email 列を email_hash へ改名してから return すると、Expectations 評価時点では
+# 既に email 列が存在せず、valid_email_format ルール（emailを参照）が
+# UNRESOLVED_COLUMN になる。
+# 教訓: 「生の列に対して検証する」ことと「列を変換・改名する」ことは、
+# 同じ関数の中で同時に行ってはいけない。検証は変換前の生の列に対して行う
+# 別の中間ステップに分離する必要がある。そのため
+# `bronze_customers_validated`（検証のみ、列はそのまま）→
+# `silver_customers_cleaned`（検証済みの列を匿名化・改名するだけ、
+# Expectationsは持たない）の2段構成にした。
 from pyspark import pipelines as dp
 from pyspark.sql import functions as F
 
@@ -60,17 +78,25 @@ SILVER_CUSTOMERS_TABLE_PROPERTIES = {
 
 
 @dp.view(
-    comment="Bronze customers を品質ルールで Drop フィルタし、PIIを匿名化した中間ビュー（AUTO CDCのsourceとしてのみ使用）",
+    comment="Bronze customers を CUSTOMER_RULES で検証する中間ビュー（列は改名・変換せず、生のまま Drop フィルタのみ行う）",
 )
 @dp.expect_all_or_drop(CUSTOMER_RULES)
+def bronze_customers_validated():
+    return dp.read_stream("bronze_customers")
+
+
+@dp.view(
+    comment="検証済み customers の PII を匿名化した中間ビュー（AUTO CDCのsourceとしてのみ使用。Expectationsはここでは持たない）",
+)
 def silver_customers_cleaned():
     secret_scope = spark.conf.get("pii_hash_salt_secret_scope")
     secret_key = spark.conf.get("pii_hash_salt_secret_key")
     pii_hash_salt = dbutils.secrets.get(scope=secret_scope, key=secret_key)
 
-    bronze = dp.read_stream("bronze_customers")
+    # bronze_customers ではなく、検証済みの bronze_customers_validated を読む。
+    validated = dp.read_stream("bronze_customers_validated")
 
-    return bronze.select(
+    return validated.select(
         F.col("customer_id"),
         F.col("name"),
         # --- 匿名化・仮名化（このテーブルより先には生の値を一切引き継がない） ---

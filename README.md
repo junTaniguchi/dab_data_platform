@@ -3,66 +3,99 @@
 Databricks Free Edition（workspace: `dbc-a2d384f2-d156`）向けに構築した、Databricks Asset
 Bundle（DAB）です。同一バンドル内に2つの独立した Lakeflow パイプラインを定義しています。
 
-1. **RAGパイプライン**（`rag_pipeline_etl`）: 非構造化ドキュメント向けメダリオン基盤。
-   Lakeflow Declarative Pipelines による Bronze/Silver/Gold ETL、Unity Catalog ABAC
-   による行レベルアクセス制御、Vector Search index の同期までを実装。
-2. **構造化データパイプライン**（`structured_pipeline_etl`）: customers/orders のような
-   構造化データ向けメダリオン基盤。Lakeflow SDP（Spark Declarative Pipelines）による
-   Bronze/Silver/Gold、AUTO CDC（SCD Type 2）、**検疫（Quarantine）による品質ゲート**、
-   Row Filter / Column Mask を実装。詳細は
-   [「構造化データパイプライン」セクション](#構造化データパイプラインcustomersorders)を参照。
+1. **[第1部: RAGパイプライン](#第1部-ragパイプライン非構造化ドキュメント)**（`rag_pipeline_etl`）:
+   非構造化ドキュメント向けメダリオン基盤。Lakeflow Declarative Pipelines による
+   Bronze/Silver/Gold ETL、Unity Catalog ABAC による行レベルアクセス制御、
+   Vector Search index の同期までを実装。
+2. **[第2部: 構造化データパイプライン](#第2部-構造化データパイプラインcustomersorders)**
+   （`structured_pipeline_etl`）: customers/orders のような構造化データ向けメダリオン基盤。
+   Lakeflow SDP（Spark Declarative Pipelines）による Bronze/Silver/Gold、
+   AUTO CDC（SCD Type 2）、**検疫（Quarantine）による品質ゲート**、Row Filter /
+   Column Mask を実装。
 
-## 構成（RAGパイプライン）
+2つのパイプラインで共通するセットアップ・運用の話は
+[「共通事項」](#共通事項)にまとめ、パイプライン固有の話はそれぞれの章に分けています。
+
+---
+
+# 共通事項
+
+## 全体構成（フォルダツリー）
+
+RAGパイプラインと構造化データパイプラインは同じバンドル・同じディレクトリ規約
+（`resources/` にDAB定義、`src/<pipeline>/` に実装、`governance/` にガバナンスSQL、
+`sample_data/` にサンプルデータ、`tests/unit` に純粋関数テスト）を共有しています。
 
 ```
 dab_data_platform/
-├── .github/workflows/                 # GitHub Actions（CI: test+validate, CD: bundle deploy）
-├── databricks.yml                     # DAB定義
-├── pyproject.toml                     # 依存関係（pyspark, databricks-sdk, pytest 等）
+├── .github/workflows/                          # GitHub Actions（CI: test+validate, CD: bundle deploy）※両パイプライン共通
+├── databricks.yml                              # DAB定義（RAG・構造化データ共通の1つのバンドル）
+├── pyproject.toml                              # 依存関係（pyspark, databricks-sdk, pytest 等）※共通
+├── docs/images/                                # README用の図版（SVG）
+│
 ├── resources/
-│   ├── rag_unity_catalog.yml          # スキーマ/Volumeの宣言的作成（既存カタログ配下）
-│   ├── rag_pipeline_etl.pipeline.yml  # Lakeflow SDP（bronze/silver/gold, STEP 01）
-│   ├── rag_pipeline_job.job.yml       # seed_sample_data -> ETL のスケジュール実行
-│   ├── rag_vector_search.yml          # vector_search_endpoints + indexes（STEP 02）
-│   └── rag_abac_policies_job.job.yml  # governance/abac_policies.sql を適用する sql_task Job
-├── src/rag_pipeline_etl/
-│   ├── common/                        # pyspark非依存の純粋関数（テスト容易性のため分離）
-│   ├── seed/seed_sample_data.py       # サンプルデータをUC Volumeへ登録するスクリプト
-│   ├── explorations/sample_exploration.ipynb
-│   └── transformations/
-│       ├── bronze/bronze_documents.py
-│       ├── silver/silver_parsed_documents.py
-│       └── gold/
-│           ├── stg_chunks_ai_prep_search.py      # 手法A（中間ビュー）
-│           ├── stg_chunks_fixed_overlap.py       # 手法B（中間ビュー）
-│           ├── gold_document_chunks_for_search.py # UNION統合。ABAC判定属性列込み
-│           └── gold_chunk_metrics_views.py       # Genie Space用の集計ビュー（STEP 05）
-├── governance/abac_policies.sql       # governed tags + CREATE POLICY（ABAC行フィルタ）
-├── sample_data/documents/             # サンプルドキュメント（department/classification別）
+│   ├── rag_unity_catalog.yml                   # [RAG] スキーマ/Volumeの宣言的作成（既存カタログ配下）
+│   ├── rag_pipeline_etl.pipeline.yml           # [RAG] Lakeflow SDP（bronze/silver/gold）
+│   ├── rag_pipeline_job.job.yml                # [RAG] seed_sample_data -> ETL のスケジュール実行
+│   ├── rag_vector_search.yml                   # [RAG] vector_search_endpoints + indexes
+│   ├── rag_abac_policies_job.job.yml           # [RAG] governance/abac_policies.sql を適用する Job
+│   ├── structured_unity_catalog.yml            # [構造化データ] スキーマ/Volume
+│   ├── structured_pipeline_etl.pipeline.yml    # [構造化データ] Lakeflow SDP本体
+│   ├── structured_pipeline_job.job.yml         # [構造化データ] seed → ETL のスケジュール実行
+│   ├── structured_quarantine_reprocessing_job.job.yml  # [構造化データ] 検疫是正ジョブ
+│   └── structured_governance_job.job.yml       # [構造化データ] governance/structured_governance.sql 適用ジョブ
+│
+├── src/
+│   ├── rag_pipeline_etl/                       # [RAG]
+│   │   ├── common/                             # pyspark非依存の純粋関数（テスト容易性のため分離）
+│   │   ├── seed/seed_sample_data.py            # サンプルデータをUC Volumeへ登録するスクリプト
+│   │   ├── explorations/sample_exploration.ipynb
+│   │   └── transformations/
+│   │       ├── bronze/bronze_documents.py
+│   │       ├── silver/silver_parsed_documents.py
+│   │       └── gold/
+│   │           ├── stg_chunks_ai_prep_search.py       # 手法A（中間ビュー）
+│   │           ├── stg_chunks_fixed_overlap.py        # 手法B（中間ビュー）
+│   │           ├── gold_document_chunks_for_search.py # UNION統合。ABAC判定属性列込み
+│   │           └── gold_chunk_metrics_views.py        # Genie Space用の集計ビュー
+│   │
+│   └── structured_pipeline_etl/                # [構造化データ]
+│       ├── structured_common/                   # pyspark非依存の純粋関数（テスト容易性のため分離）
+│       │   ├── quality_rules.py                 # ★検疫パターンの要。ORDER_RULES/CUSTOMER_RULES等
+│       │   ├── pii.py                           # 匿名化・仮名化の参照実装（hash/mask/generalize）
+│       │   └── reprocessing_rules.py            # 是正可否の判定ロジック（CORRECTED/UNCORRECTABLE）
+│       ├── seed/seed_structured_sample_data.py
+│       ├── reprocessing/reprocess_quarantine.py  # 検疫の是正・再投入ジョブ
+│       └── transformations/
+│           ├── bronze/
+│           │   ├── bronze_customers.py
+│           │   └── bronze_orders.py             # カード番号を即時ハッシュ化し生値を一切保持しない
+│           ├── silver/
+│           │   ├── silver_customers.py          # AUTO CDC (SCD Type 2) + PII匿名化
+│           │   ├── silver_orders.py             # 正常系（Drop）
+│           │   └── silver_orders_quarantine.py  # ★検疫系（ORDER_RULESの否定を捕捉）
+│           └── gold/
+│               ├── gold_daily_sales_by_region.py  # MV。Row Filter対象
+│               ├── gold_customer_summary.py       # MV。Row Filter + Column Mask対象
+│               ├── gold_order_quality_gate.py     # MV。Fail（重複キー等の重大ゲート）
+│               └── gold_data_quality_summary.py   # MV。検疫状況の観測用サマリ
+│
+├── governance/
+│   ├── abac_policies.sql                       # [RAG] governed tags + CREATE POLICY（ABAC行フィルタ）
+│   └── structured_governance.sql               # [構造化データ] Owner設定 + 記述タグ + Row Filter + Column Mask
+│
+├── sample_data/
+│   ├── documents/                              # [RAG] department/classification別サンプルドキュメント
+│   └── structured/                             # [構造化データ] customers/orders サンプル
+│
 └── tests/
-    ├── unit/                          # pyspark非依存。common/ の純粋関数のみをテスト
-    └── integration/                   # 実ワークスペースに対するE2Eテスト（既定でスキップ）
+    ├── unit/                                    # pyspark非依存。RAG・構造化データ両方の純粋関数をテスト ※共通
+    └── integration/                             # [RAG] 実ワークスペースに対するE2Eテスト（既定でスキップ）
 ```
 
-## サンプルデータ
+## Databricks CLI のインストール・認証設定
 
-`sample_data/documents/<department>/<classification>/*.txt` に、部署・機密レベルが異なる
-6件のサンプル文書を用意しています（架空の企業 "Acme Analytics" の想定）。
-
-| department  | classification | file                          |
-|-------------|-----------------|--------------------------------|
-| hr          | confidential     | disciplinary_process.txt      |
-| hr          | internal          | onboarding_guide.txt           |
-| finance     | restricted        | q3_forecast_internal.txt       |
-| finance     | internal          | expense_policy.txt             |
-| engineering | internal          | architecture_overview.txt      |
-| general     | public            | company_faq.txt                 |
-
-`department` / `classification` はファイルパスから抽出され、Bronze -> Silver -> Gold まで
-そのまま引き継がれ、`governance/abac_policies.sql` の ABAC 行フィルタが参照する判定属性列
-として使われます。
-
-## セットアップ手順
+両パイプラインで共通の前提です。
 
 1. Databricks CLI をインストールする（Mac）。
 
@@ -125,87 +158,66 @@ dab_data_platform/
    PATには有効期限があり、失効すると再発行・差し替えが必要になるため、
    通常は上記のOAuthログインを推奨する。
 
-4. SQL ウェアハウス ID を確認し、環境変数として設定する（ABACポリシー適用ジョブが使用）。
+## SQL ウェアハウス ID の設定
 
-   **IDの確認方法**
-   ```
-   databricks warehouses list
-   ```
-   もしくはUIで 左サイドバー「SQL」→「SQL Warehouses」→ 対象のウェアハウスをクリックし、
-   URL末尾（`.../sql/warehouses/<ID>`）または「Connection details」タブの HTTP Path
-   （`/sql/1.0/warehouses/<ID>`）から確認する。Free Edition では既定で
-   `Serverless Starter Warehouse` が1つ用意されている。
+RAGパイプラインの `rag_abac_policies_job`、構造化データパイプラインの
+`structured_governance_job` の両方が SQL ウェアハウスを使用します。
 
-   **設定方法（`databricks.yml` を書き換えない）**
-   `variables.warehouse_id` は `default: ""` のままにしてあり、各自の環境で
-   Databricks Asset Bundles の公式な変数上書き機構である
-   **環境変数 `BUNDLE_VAR_<変数名>`** を使って値を注入する運用にしている
-   （ワークスペースごとに異なる値をリポジトリにコミットしないため）。
-   ```
-   export BUNDLE_VAR_warehouse_id=<確認したウェアハウスID>
-   ```
-   `~/.zshrc` 等に追記して恒久化してもよいし、単発なら
-   `databricks bundle deploy -t dev --var="warehouse_id=<ID>"` のように
-   `--var` オプションでも上書きできる（優先順位は `--var` > `BUNDLE_VAR_*` 環境変数 >
-   `targets.<target>.variables` > `variables` の `default`）。
-   GitHub Actions での設定方法は [CI/CD](#cicdgithub-actions) セクションを参照。
+**IDの確認方法**
+```
+databricks warehouses list
+```
+もしくはUIで 左サイドバー「SQL」→「SQL Warehouses」→ 対象のウェアハウスをクリックし、
+URL末尾（`.../sql/warehouses/<ID>`）または「Connection details」タブの HTTP Path
+（`/sql/1.0/warehouses/<ID>`）から確認する。Free Edition では既定で
+`Serverless Starter Warehouse` が1つ用意されている。
 
-5. governance/abac_policies.sql 内の `security-admins` / `dept-hr` 等のアカウントグループを
-   事前に作成しておく（存在しない場合、ABACポリシーの `IS_ACCOUNT_GROUP_MEMBER` は単に false 扱い
-   になり誰も一致しない。未作成のままでもデプロイ自体は失敗しない）。
-
-6. バンドルをデプロイする。**初回はここで `vector_search_indexes` の作成だけ失敗する**
-   （Gold テーブルがまだ存在しないため。想定通りの動作なので無視してよい）。
-   ```
-   databricks bundle deploy -t dev
-   ```
-   ```
-   Error: cannot create resources.vector_search_indexes.rag_document_chunks_index:
-   Table 'workspace.<schema>.gold_document_chunks_for_search' does not exist.
-   ```
-
-7. サンプルデータ投入 + ETL実行（Bronze → Silver → Gold テーブルを実際に作成する）。
-   ```
-   databricks bundle run rag_pipeline_job -t dev
-   ```
-   数分かかる（サーバーレスクラスタの起動込み）。完了後、もう一度デプロイすると
-   Gold テーブルが存在するようになるため Vector Search index の作成に進める。
-   ```
-   databricks bundle deploy -t dev
-   ```
-   `databricks vector-search-indexes get-index workspace.<schema>.rag_document_chunks_index`
-   で `"ready": true` になっていることを確認する（初回同期は数分かかることがある）。
-
-8. ABACポリシーの適用。
-   ```
-   databricks bundle run rag_abac_policies_job -t dev
-   ```
-   2回目以降にこのジョブを再実行する場合は、`governance/abac_policies.sql` 冒頭の
-   `CREATE GOVERNED TAG` 文をコメントアウトすること（後述の「既知の制約」セクション参照）。
-
-9. Vector Search index の同期状況を Databricks UI（Catalog Explorer > 該当スキーマ >
-   Vector Search）、またはCLIの `databricks vector-search-indexes get-index <index名>` で確認する。
-
-`rag_pipeline_job` の schedule は事故防止のため `pause_status: PAUSED` にしてあります。
-動作確認後、`resources/rag_pipeline_job.job.yml` を `UNPAUSED` に変更して再デプロイしてください。
+**設定方法（`databricks.yml` を書き換えない）**
+`variables.warehouse_id` は `default: ""` のままにしてあり、各自の環境で
+Databricks Asset Bundles の公式な変数上書き機構である
+**環境変数 `BUNDLE_VAR_<変数名>`** を使って値を注入する運用にしている
+（ワークスペースごとに異なる値をリポジトリにコミットしないため）。
+```
+export BUNDLE_VAR_warehouse_id=<確認したウェアハウスID>
+```
+`~/.zshrc` 等に追記して恒久化してもよいし、単発なら
+`databricks bundle deploy -t dev --var="warehouse_id=<ID>"` のように
+`--var` オプションでも上書きできる（優先順位は `--var` > `BUNDLE_VAR_*` 環境変数 >
+`targets.<target>.variables` > `variables` の `default`）。
+GitHub Actions での設定方法は [CI/CD](#cicdgithub-actions) セクションを参照。
 
 ## テスト
 
 ```
 pip install -e ".[dev]"
-pytest tests/unit                 # pyspark / Databricks Runtime不要。純粋関数のみを検証
-pytest tests/integration -m integration   # 要: デプロイ済みワークスペースへの接続情報（README内の環境変数）
+pytest tests/unit -m "not integration"    # pyspark / Databricks Runtime不要。RAG・構造化データ両方の純粋関数を検証
+pytest tests/integration -m integration   # [RAGのみ] 要: デプロイ済みワークスペースへの接続情報
 ```
 
-`tests/unit` は `pyspark.pipelines`（Lakeflow）に依存しない `src/rag_pipeline_etl/common/` の
-純粋関数のみを検証するため、ローカル環境や通常のCIでもそのまま実行できます。
+`tests/unit` は `pyspark.pipelines`（Lakeflow）に依存しない
+`src/rag_pipeline_etl/common/` と `src/structured_pipeline_etl/structured_common/` の
+純粋関数のみを検証するため、ローカル環境や通常のCIでもそのまま実行できます
+（両ディレクトリは `common` / `structured_common` とパッケージ名が異なるため、
+`pyproject.toml` の `pythonpath` に両方追加してもimportの衝突は起きません）。
+
+パイプライン固有のテストだけを実行したい場合は以下のように対象を絞れます。
+
+```
+# RAGパイプライン分のみ
+pytest tests/unit/test_silver_parsed_documents.py tests/unit/test_gold_chunking_union.py -v
+
+# 構造化データパイプライン分のみ
+pytest tests/unit/test_structured_quality_rules.py tests/unit/test_structured_pii.py \
+       tests/unit/test_structured_reprocessing_rules.py -v
+```
 
 ## CI/CD（GitHub Actions）
 
 リポジトリ: https://github.com/junTaniguchi/dab_data_platform
 
-`.github/workflows/ci.yml` と `.github/workflows/cd.yml` を用意しています。実際に動かすには
-GitHub 側で以下の設定が必要です。
+`.github/workflows/ci.yml` と `.github/workflows/cd.yml` を用意しています。バンドル全体
+（RAG・構造化データ両パイプライン）を対象にしており、パイプライン単位で分かれてはいません。
+実際に動かすには GitHub 側で以下の設定が必要です。
 
 ### 1. 認証情報（Secrets）
 
@@ -215,8 +227,9 @@ Databricks への認証は、個人アクセストークンではなく **サー
 
 Databricksワークスペースでサービスプリンシパルを作成し、対象の catalog/schema/volume/warehouse
 に必要な権限（`USE CATALOG`, `USE SCHEMA`, `CREATE TABLE`, `READ VOLUME`/`WRITE VOLUME`,
-SQLウェアハウスの `CAN_USE` 等）を付与した上で、GitHubリポジトリの
-**Settings > Secrets and variables > Actions** に以下を登録してください。
+SQLウェアハウスの `CAN_USE`、構造化データパイプラインを使う場合は Secret Scope の `READ` 等）を
+付与した上で、GitHubリポジトリの **Settings > Secrets and variables > Actions** に以下を
+登録してください。
 
 | Secret name                 | 内容                                                             |
 |------------------------------|------------------------------------------------------------------|
@@ -227,7 +240,7 @@ SQLウェアハウスの `CAN_USE` 等）を付与した上で、GitHubリポジ
 `warehouse_id` はワークスペース固有の値ではあるが機密情報ではないため、Secret ではなく
 **Settings > Secrets and variables > Actions > Variables** タブに **repository variable**
 として登録し、ワークフロー内で `BUNDLE_VAR_warehouse_id` 環境変数として渡す
-（`databricks.yml` 側は書き換えない。詳細は [セットアップ手順](#セットアップ手順) 参照）。
+（`databricks.yml` 側は書き換えない。詳細は [SQLウェアハウスIDの設定](#sql-ウェアハウス-id-の設定) 参照）。
 
 | Variable name            | 内容                                              |
 |----------------------------|---------------------------------------------------|
@@ -243,30 +256,207 @@ SQLウェアハウスの `CAN_USE` 等）を付与した上で、GitHubリポジ
 ### 3. ワークフローの役割
 
 - **`ci.yml`**（PR作成時・main push時に実行）
-  - `pytest tests/unit -m "not integration"` — pyspark非依存の純粋関数テストを実行
-  - `databricks bundle validate -t dev` — バンドル定義の構文・変数解決チェック
+  - `pytest tests/unit -m "not integration"` — pyspark非依存の純粋関数テストを実行（RAG・構造化データ両方）
+  - `databricks bundle validate -t dev` — バンドル定義の構文・変数解決チェック（バンドル全体）
 - **`cd.yml`**（main への push、または手動実行 `workflow_dispatch`）
   - `databricks bundle deploy -t <dev|prod>` — バンドルをデプロイ
-  - `databricks bundle run rag_abac_policies_job -t <dev|prod>` — ABACポリシーを適用
+  - `databricks bundle run rag_abac_policies_job -t <dev|prod>` — RAGのABACポリシーを適用
   - 通常の push は `dev` に、`workflow_dispatch` で `target: prod` を選んだ場合のみ `prod`
     environment（レビュー承認）を経由してデプロイする構成にしてある。
 
 ### 4. 未実装・要検討事項
 
-- `rag_pipeline_job`（Bronze/Silver/Gold ETL本体）は cd.yml では自動実行していません。
-  スケジュール実行（`resources/rag_pipeline_job.job.yml` の cron）に任せるか、
-  cd.yml に `databricks bundle run rag_pipeline_job` のステップを追加するかは運用方針次第です。
-- 統合テスト（`tests/integration`）をCIに組み込む場合は、`RAG_DAB_*` 環境変数をワークフロー内で
-  secrets から設定し、実際にデプロイ済みのdev環境に対して実行するジョブを別途追加してください。
+- `rag_pipeline_job` / `structured_pipeline_job`（ETL本体）は cd.yml では自動実行していません。
+  スケジュール実行（各 `*.job.yml` の cron）に任せるか、cd.yml に
+  `databricks bundle run <job名>` のステップを追加するかは運用方針次第です。
+- `structured_governance_job`（Row Filter/Column Mask/Owner/Tag適用）も同様にcd.ymlでは
+  自動実行していません。
+- 統合テスト（`tests/integration`、RAGのみ）をCIに組み込む場合は、`RAG_DAB_*` 環境変数を
+  ワークフロー内で secrets から設定し、実際にデプロイ済みのdev環境に対して実行するジョブを
+  別途追加してください。
 - Databricks CLI のインストールに使っている `databricks/setup-cli@main` は公式Actionです。
   ピン留めしたい場合はタグ付きバージョンに固定してください。
+
+## Lakeflow実装で共通して踏まえた技術的注意点
+
+以下は最初に RAGパイプラインを実装した際に実機で判明し、後から作った構造化データ
+パイプラインにも同様に適用している、Lakeflow Declarative Pipelines 全般の制約です。
+
+- **`__file__` は使えない**: Lakeflow の変換ファイルは分離モジュールとして exec されるため
+  `__file__` が未定義。`spark.conf.get("<pipeline>_src_root")`
+  （各 `*.pipeline.yml` の `configuration` 経由）で代替している。同じ理由で
+  `seed_sample_data.py` / `seed_structured_sample_data.py` / `reprocess_quarantine.py` も
+  `--sample_data_dir` / `--src_root` 等の引数でパスを明示的に受け取る設計にしてある。
+- **デコレータ引数は関数内で遅延解決できない**: `@dp.expect_all_or_drop(RULES)` のような
+  デコレータの引数は、モジュールロード時点（decorator評価時点）で束縛済みでなければならない。
+  そのため `structured_common` への `sys.path` 追加・import を関数の中まで遅延できないケースがある
+  （`silver_orders.py` / `gold_order_quality_gate.py`）。関数本体の中でしか使わない場合
+  （`silver_orders_quarantine.py`）は、`bronze_documents.py` と同じ「関数内で
+  `spark.conf.get(...)` する」安全なパターンに寄せてある。
+- **`input_file_name()` は Unity Catalog非対応**: `bronze_documents.py` / 構造化データの
+  Bronze変換では `_metadata.file_path` を使う（`binaryFile` フォーマットの場合は `path` 列）。
+- **spark_python_task の `environment_version`**: 旧 `client: "1"` は
+  `Invalid platform channel Client-1` でクラスタ起動に失敗するため `environment_version: "2"`
+  を明示する。
+- **dev target の自動プレフィックス**: `mode: development` により、実際に作成される
+  スキーマ名には `dev_<user>_` が自動付与される（例: `rag_dev` → `dev_ultia0602_rag_dev`）。
+  `${var.schema}` のプレーンな値を使うと存在しないスキーマ名を参照してしまうため、
+  Volumeパスやジョブのパラメータでは必ず `${resources.schemas.<schema資源名>.name}`
+  （リソース参照）を使うようにしてある。
+- **カタログは新規作成しない**: Free Edition では `CREATE CATALOG` に明示的な
+  storage location が必要（"Metastore storage root URL does not exist... provide a
+  storage location"、UIからの作成でのみ Default Storage が自動適用される）。そのため
+  新規カタログは作らず、既定で存在する管理カタログ `workspace`
+  （`variables.catalog` の default）の配下にスキーマ・Volumeだけを作成する構成にしている。
+  別のワークスペース/カタログを使う場合は `variables.catalog` の default を変更すること。
+- **Auto Loader の再帰探索**: サブディレクトリ配下にもファイルが置かれうる場合は
+  `.option("recursiveFileLookup", "true")` を明示する（既定で再帰されるとは限らない）。
+  構造化データパイプラインの `bronze_orders.py` は、検疫の再処理ジョブが
+  `orders/reprocessed/` サブフォルダへ再投入ファイルを書くため、これを明示している。
+
+---
+
+# 第1部: RAGパイプライン（非構造化ドキュメント）
+
+## サンプルデータ
+
+`sample_data/documents/<department>/<classification>/*.txt` に、部署・機密レベルが異なる
+6件のサンプル文書を用意しています（架空の企業 "Acme Analytics" の想定）。
+
+| department  | classification | file                          |
+|-------------|-----------------|--------------------------------|
+| hr          | confidential     | disciplinary_process.txt      |
+| hr          | internal          | onboarding_guide.txt           |
+| finance     | restricted        | q3_forecast_internal.txt       |
+| finance     | internal          | expense_policy.txt             |
+| engineering | internal          | architecture_overview.txt      |
+| general     | public            | company_faq.txt                 |
+
+`department` / `classification` はファイルパスから抽出され、Bronze -> Silver -> Gold まで
+そのまま引き継がれ、`governance/abac_policies.sql` の ABAC 行フィルタが参照する判定属性列
+として使われます。
+
+## セットアップ手順
+
+[「共通事項」](#共通事項)（Databricks CLI・OAuthログイン・warehouse_id）が完了している
+前提で、以下のRAG固有のステップを行います。
+
+1. `governance/abac_policies.sql` 内の `security-admins` / `dept-hr` 等のアカウントグループを
+   事前に作成しておく（存在しない場合、ABACポリシーの `IS_ACCOUNT_GROUP_MEMBER` は単に false 扱い
+   になり誰も一致しない。未作成のままでもデプロイ自体は失敗しない）。
+
+2. バンドルをデプロイする。**初回はここで `vector_search_indexes` の作成だけ失敗する**
+   （Gold テーブルがまだ存在しないため。想定通りの動作なので無視してよい）。
+   ```
+   databricks bundle deploy -t dev
+   ```
+   ```
+   Error: cannot create resources.vector_search_indexes.rag_document_chunks_index:
+   Table 'workspace.<schema>.gold_document_chunks_for_search' does not exist.
+   ```
+
+3. サンプルデータ投入 + ETL実行（Bronze → Silver → Gold テーブルを実際に作成する）。
+   ```
+   databricks bundle run rag_pipeline_job -t dev
+   ```
+   数分かかる（サーバーレスクラスタの起動込み）。完了後、もう一度デプロイすると
+   Gold テーブルが存在するようになるため Vector Search index の作成に進める。
+   ```
+   databricks bundle deploy -t dev
+   ```
+   `databricks vector-search-indexes get-index workspace.<schema>.rag_document_chunks_index`
+   で `"ready": true` になっていることを確認する（初回同期は数分かかることがある）。
+
+4. ABACポリシーの適用。
+   ```
+   databricks bundle run rag_abac_policies_job -t dev
+   ```
+   2回目以降にこのジョブを再実行する場合は、`governance/abac_policies.sql` 冒頭の
+   `CREATE GOVERNED TAG` 文をコメントアウトすること（後述の「既知の制約」セクション参照）。
+
+5. Vector Search index の同期状況を Databricks UI（Catalog Explorer > 該当スキーマ >
+   Vector Search）、またはCLIの `databricks vector-search-indexes get-index <index名>` で確認する。
+
+`rag_pipeline_job` の schedule は事故防止のため `pause_status: PAUSED` にしてあります。
+動作確認後、`resources/rag_pipeline_job.job.yml` を `UNPAUSED` に変更して再デプロイしてください。
+
+## Vector Search Index（Delta Sync Index）に登録されたデータを閲覧する
+
+Delta Sync Index はテーブルではなく検索専用のインデックスなので、`SELECT * FROM <index名>`
+のように通常のSQLで中身を一覧することはできません。以下の3つの方法を組み合わせて確認します。
+
+### 1. 同期元テーブルを直接見る（登録されている元テキストを確認する）
+
+Delta Sync Index は `gold_document_chunks_for_search` を同期元（source_table）にしているため、
+実際に埋め込みの元になったテキストやメタデータは、同期元テーブルへの通常のSQLで確認できます。
+一番手軽で、まず確認すべき方法です。
+
+```sql
+SELECT chunk_id, department, classification, chunk_method, chunk_text
+FROM <catalog>.<schema>.gold_document_chunks_for_search
+ORDER BY ingestion_time DESC
+LIMIT 20;
+```
+
+### 2. Databricks UI で類似検索を試す
+
+Catalog Explorer > 対象カタログ・スキーマ を開くと `rag_document_chunks_index` が
+Vector Search index として表示されます。開くと以下を確認できます。
+
+- 同期ステータス（`Ready` / `Provisioning` / `Failed`）と `source_table` / 埋め込みモデル
+  （`databricks-gte-large-en`）等のインデックス定義
+- クエリ入力欄から検索文字列を入れて、近傍検索結果（`chunk_text` 等と類似度スコア）を
+  UI上でそのまま確認できる画面（Playground / Query タブ相当。UIバージョンによって名称は
+  変わりうる）
+
+### 3. CLI / Python SDK で類似検索クエリを実行する（実際に動作確認済み）
+
+**Python SDK（推奨）**: 以下のスクリプトは実際にこのワークスペースの
+`rag_document_chunks_index` に対して実行し、`"経費精算のルールを教えて"` というクエリに対して
+`finance/internal` の経費精算ポリシー文書が上位に返ってくることを確認済みです。
+
+```python
+from databricks.sdk import WorkspaceClient
+
+w = WorkspaceClient()  # ローカルのプロファイル/環境変数から認証情報を解決
+result = w.vector_search_indexes.query_index(
+    index_name="workspace.<schema>.rag_document_chunks_index",
+    query_text="経費精算のルールを教えて",
+    columns=["chunk_text", "department", "classification"],
+    num_results=5,
+)
+for row in result.result.data_array:
+    department, classification, score, chunk_text = row[1], row[2], row[3], row[0]
+    print(department, classification, round(score, 3), chunk_text[:60])
+```
+
+**Databricks CLI**: 同じ内容を CLI からも呼び出せます（`--json` でリクエストボディ全体を渡す。
+`--query-text` 単体フラグは `columns` を指定できないため使えない）。
+
+```
+databricks vector-search-indexes query-index workspace.<schema>.rag_document_chunks_index \
+  --json '{"query_text": "経費精算のルールを教えて", "columns": ["chunk_text","department","classification"], "num_results": 5}'
+```
+
+> **既知のCLIの不具合（Databricks CLI v1.9.0で確認）**: 上記コマンドはサーバー側では
+> 正常に `200 OK` で結果を返しているものの、CLI クライアント側のレスポンス整形処理で
+> `failed to unmarshal response body: invalid character 'r' after top-level value` という
+> エラーを表示することを実機で確認しています（結果自体は取得できており、エラー出力に
+> 含まれるHTTPレスポンスのログの中に実際の検索結果がJSONとして表示される）。
+> 結果を確実に・読みやすく取得したい場合は上記の Python SDK か UI を使うことを推奨します。
+
+補足: Delta Sync Index自体は埋め込みベクトル（数値配列）も保持していますが、生のベクトル値は
+人間が読んでも意味を判断できないため、実運用では「①同期元テーブルで元テキストを確認する」
+「③類似検索クエリで実際の検索結果（どの文書が上位に来るか）を確認する」の組み合わせで
+動作確認するのが一般的です。
 
 ## 既知の制約・手動での対応が必要な部分
 
 このバンドルは Databricks Free Edition のワークスペース（Databricks CLI v1.9.0）に対して
 **実際に `bundle deploy` / `bundle run` を最後まで実行し、Bronze→Silver→Gold→Vector Search→
 ABAC行フィルタが動作することを確認済み**です。以下は、その過程で判明した実際の制約と、
-コード側で対応済みの内容・利用者側で手動対応が必要な内容です。
+コード側で対応済みの内容・利用者側で手動対応が必要な内容です（Lakeflow全般に共通する制約は
+[共通事項の該当セクション](#lakeflow実装で共通して踏まえた技術的注意点)を参照）。
 
 ### コード側で対応済み（設計として理解しておくとよい点）
 
@@ -292,27 +482,6 @@ ABAC行フィルタが動作することを確認済み**です。以下は、�
   cloudpickle で別プロセスに転送されるため）。そのため chunk_id 生成・固定長チャンキングは
   `F.sha2` / `sequence`+`substring` のようなネイティブ Spark SQL 式で実装している。
   `common/` の同名関数は参照実装・単体テスト用として残している。
-- **`__file__` は使えない**: Lakeflow の変換ファイルは分離モジュールとして exec されるため
-  `__file__` が未定義。`spark.conf.get("rag_src_root")`
-  （`rag_pipeline_etl.pipeline.yml` の `configuration.rag_src_root` 経由）で代替している。
-  同じ理由で `seed_sample_data.py` も `--sample_data_dir` 引数
-  （`${workspace.file_path}/sample_data/documents`）でパスを受け取る設計にしてある。
-- **`input_file_name()` は Unity Catalog非対応**: `bronze_documents.py` では
-  `_metadata.file_path` の代わりに `binaryFile` フォーマットが持つ `path` 列をそのまま使う。
-- **spark_python_task の `environment_version`**: 旧 `client: "1"` は
-  `Invalid platform channel Client-1` でクラスタ起動に失敗したため `environment_version: "2"`
-  に変更済み。
-- **dev target の自動プレフィックス**: `mode: development` により、実際に作成される
-  スキーマ名には `dev_<user>_` が自動付与される（例: `rag_dev` → `dev_ultia0602_rag_dev`）。
-  `${var.schema}` のプレーンな値を使うと存在しないスキーマ名を参照してしまうため、
-  Volumeパスやジョブのパラメータでは必ず `${resources.schemas.rag_schema.name}`
-  （リソース参照）を使うようにしてある。
-- **カタログは新規作成しない**: Free Edition では `CREATE CATALOG` に明示的な
-  storage location が必要（"Metastore storage root URL does not exist... provide a
-  storage location"、UIからの作成でのみ Default Storage が自動適用される）。そのため
-  新規カタログは作らず、既定で存在する管理カタログ `workspace`
-  （`variables.catalog` の default）の配下にスキーマ・Volumeだけを作成する構成にしている。
-  別のワークスペース/カタログを使う場合は `variables.catalog` の default を変更すること。
 
 ### 利用者側で手動対応が必要な部分
 
@@ -357,17 +526,19 @@ ABAC行フィルタが動作することを確認済み**です。以下は、�
   （STANDARD endpoint、HYBRID index_subtype）。ただし初回の index 作成・同期には
   数分〜十数分程度かかることがある（`ready: false` の間は
   `"Delta sync index creation is pending endpoint provisioning."` 等のメッセージになる）。
+- **`query-index` CLIの表示バグ**: 上記「Vector Search Indexに登録されたデータを閲覧する」
+  セクション参照。CLI v1.9.0ではレスポンス整形時にクライアント側でエラー表示になる
+  （検索自体はサーバー側で成功している）。Python SDK か UI を使えば問題なく結果を確認できる。
 - サンプルデータは `.txt` のプレーンテキストです。実際の非テキスト文書（PDF等）での
   動作確認は別途 Volume に配置して行ってください
   （`bronze_documents.py` / `silver_parsed_documents.py` は拡張子で分岐する実装）。
 
 ---
 
-# 構造化データパイプライン（customers/orders）
+# 第2部: 構造化データパイプライン（customers/orders）
 
 customers（顧客マスタ・CDC）/ orders（受注ファクト）を題材にした、構造化データ向けの
-Lakeflow SDP（Spark Declarative Pipelines）実装です。RAGパイプラインと同じ
-`databricks.yml` バンドル内に、独立したパイプライン・ジョブ群として定義しています。
+Lakeflow SDP（Spark Declarative Pipelines）実装です。
 
 ## 概要・アーキテクチャ
 
@@ -401,51 +572,6 @@ schemaLocation / Deletion Vectors / Expectation Action / 匿名化 / Row Filter�
 Mask / Tag / Predictive Optimization）に沿って実装しています。対応関係は本セクション末尾の
 [表](#レイヤー別設定一覧添付リファレンス表との対応)にまとめています。
 
-## 構成（ファイルツリー）
-
-```
-sample_data/structured/
-├── customers/customers_seed.csv       # CDCイベント風の顧客サンプル（SCD2実演用）
-├── orders/orders_seed.json            # 受注サンプル（検疫実演用。3件が意図的に不正）
-└── orders_incident/                   # 既定では取り込まないオプションデータ
-    └── orders_incident_duplicate.json # Gold Fail挙動を確認したい場合のみ手動投入
-
-src/structured_pipeline_etl/
-├── structured_common/                 # pyspark非依存の純粋関数（テスト容易性のため分離）
-│   ├── quality_rules.py               # ★検疫パターンの要。ORDER_RULES/CUSTOMER_RULES等
-│   ├── pii.py                         # 匿名化・仮名化の参照実装（hash/mask/generalize）
-│   └── reprocessing_rules.py          # 是正可否の判定ロジック（CORRECTED/UNCORRECTABLE）
-├── seed/seed_structured_sample_data.py
-├── reprocessing/reprocess_quarantine.py  # 検疫の是正・再投入ジョブ
-└── transformations/
-    ├── bronze/
-    │   ├── bronze_customers.py
-    │   └── bronze_orders.py           # カード番号を即時ハッシュ化し生値を一切保持しない
-    ├── silver/
-    │   ├── silver_customers.py        # AUTO CDC (SCD Type 2) + PII匿名化
-    │   ├── silver_orders.py           # 正常系（Drop）
-    │   └── silver_orders_quarantine.py # ★検疫系（ORDER_RULESの否定を捕捉）
-    └── gold/
-        ├── gold_daily_sales_by_region.py  # MV。Row Filter対象
-        ├── gold_customer_summary.py       # MV。Row Filter + Column Mask対象
-        ├── gold_order_quality_gate.py     # MV。Fail（重複キー等の重大ゲート）
-        └── gold_data_quality_summary.py   # MV。検疫状況の観測用サマリ
-
-resources/
-├── structured_unity_catalog.yml            # スキーマ/Volume
-├── structured_pipeline_etl.pipeline.yml    # Lakeflow SDP本体
-├── structured_pipeline_job.job.yml         # seed → ETL のスケジュール実行
-├── structured_quarantine_reprocessing_job.job.yml  # 検疫是正ジョブのスケジュール実行
-└── structured_governance_job.job.yml       # governance/structured_governance.sql 適用ジョブ
-
-governance/structured_governance.sql   # Owner設定 + 記述タグ + Row Filter + Column Mask
-
-tests/unit/
-├── test_structured_quality_rules.py       # 検疫パターンの回帰テスト（データ欠落が無いことを保証）
-├── test_structured_pii.py
-└── test_structured_reprocessing_rules.py
-```
-
 ## サンプルデータ
 
 **customers_seed.csv**（`customer_id, name, email, phone, address, birth_date, region,
@@ -473,8 +599,8 @@ Silver 以降から跡形もなく消えます。これは意図的な悪い例�
 
 ## セットアップ手順
 
-RAGパイプラインのセットアップ（Databricks CLI・OAuthログイン・warehouse_id）が
-完了している前提で、追加で以下を行います。
+[「共通事項」](#共通事項)（Databricks CLI・OAuthログイン・warehouse_id）が完了している
+前提で、以下を行います。
 
 ### 1. Secretsの事前準備（PIIハッシュ化ソルト）
 
@@ -483,8 +609,7 @@ RAGパイプラインのセットアップ（Databricks CLI・OAuthログイン�
 
 ```
 databricks secrets create-scope structured_pii
-databricks secrets put-secret structured_pii hash_salt
-# プロンプトでソルト文字列を入力（十分ランダムな値。例: openssl rand -hex 32 の出力）
+databricks secrets put-secret structured_pii hash_salt --string-value "$(openssl rand -hex 32)"
 ```
 
 Scope/Key名を変更したい場合は `databricks.yml` の
@@ -514,7 +639,7 @@ databricks bundle deploy -t dev
 databricks bundle run structured_pipeline_job -t dev
 ```
 
-初回実行後、以下でテーブルが作成されていることを確認できます。
+デプロイ後、ガバナンス定義（Owner・タグ・Row Filter・Column Mask）を適用するには以下を実行する。
 
 ```
 databricks bundle run structured_governance_job -t dev
@@ -575,31 +700,33 @@ silver_orders の行数 + silver_orders_quarantine の行数 == bronze_orders �
 検疫テーブルの行は「捕捉して終わり」ではありません。以下のサイクルを
 `reprocessing/reprocess_quarantine.py` が回します。
 
+![検疫の是正・再投入ライフサイクル](docs/images/quarantine_reprocessing_lifecycle.svg)
+
 1. **Quarantine**: `silver_orders_quarantine` へ捕捉される（パイプライン内で自動）。
 2. **Validation**: `gold_data_quality_summary` でルール別の違反件数・Pass Rateを確認する。
-3. **Correction**: `structured_common/reprocessing_rules.py` の
+3. **Correction 判定**: `structured_common/reprocessing_rules.py` の
    `decide_resolution()` が、既知のルール違反（`positive_amount` /
    `order_date_not_future`）なら `CORRECTED`、原因不明・機械的に補正不能な違反
    （`customer_id_not_null` / `valid_currency`）なら `UNCORRECTABLE` と判定します。
    1行の中に1つでも `UNCORRECTABLE` な違反があれば、他が補正可能でも全体を
    `UNCORRECTABLE` として扱います（中途半端な補正はしない設計）。
-4. **Reprocessing**: `CORRECTED` と判定された行だけを、`apply_correction()` で
-   値を補正した上で、Bronzeの取り込みVolume（`raw_structured_data/orders/reprocessed/`）
-   へ**生のJSONファイルとして再投入**します。**Silver/Bronzeの Lakeflow 管理テーブルへ
+4. **監査ログへの追記**: 判定結果（`CORRECTED`/`UNCORRECTABLE`、理由、時刻）を
+   `quarantine_resolution_log`（`reprocess_quarantine.py` が単独で所有する、
+   Lakeflow管理外の素のDeltaテーブル）へ追記します。**`silver_orders_quarantine`
+   自体は一切 UPDATE/DELETE しません**（検疫時点のスナップショットを監査証跡として
+   不変のまま保持するため）。この追記は `CORRECTED` / `UNCORRECTABLE` どちらの
+   行に対しても行われます。
+5. **Reprocessing（`CORRECTED` 行のみ）**: `apply_correction()` で値を補正した上で、
+   Bronzeの取り込みVolume（`raw_structured_data/orders/reprocessed/`）へ**生の
+   JSONファイルとして再投入**します。**Silver/Bronzeの Lakeflow 管理テーブルへ
    外部から直接 MERGE/UPDATE することはしません**（Lakeflowパイプラインが所有する
    テーブルへパイプライン外部から書き込む挙動はサポートが曖昧なため）。次回の
    パイプライン実行で Bronze → Silver の Expectations 検証を"もう一度正面から"
-   通すことで、安全に再評価させます。
-5. **Expectation再評価**: 次回の `structured_pipeline_job` 実行で、再投入された
+   通すことで、安全に再評価させます。`UNCORRECTABLE` 行はここで終端し、
+   人手でソースシステム側の原因調査・修正を行います。
+6. **Expectation再評価**: 次回の `structured_pipeline_job` 実行で、再投入された
    レコードが Bronze → Silver へ流れ、正しければ `silver_orders` / `gold_*` へ
    反映されます（違反が残っていれば再び `silver_orders_quarantine` へ入ります）。
-
-是正結果（`CORRECTED`/`UNCORRECTABLE`、理由、時刻）は `silver_orders_quarantine`
-自体を UPDATE するのではなく、**`quarantine_resolution_log`** という
-`reprocess_quarantine.py` が単独で所有する素の Delta テーブル（Lakeflow管理外）に
-追記します。これにより「Lakeflowが所有するテーブルへパイプライン外から書き込む」
-という曖昧な操作を完全に避けつつ、監査証跡（いつ・どう是正したか）を失わずに残せます。
-`silver_orders_quarantine` は検疫時点のスナップショットとして不変のまま保持されます。
 
 **注意（カード番号のような Bronze で破棄済みの項目について）**: `silver_orders_quarantine`
 は Bronze より後段のテーブルなので、Bronzeで即座に破棄したフィールド（生の
@@ -614,7 +741,8 @@ silver_orders の行数 + silver_orders_quarantine の行数 == bronze_orders �
 含む）が Auto Loader に読み込まれると、`cloudFiles.schemaEvolutionMode=addNewColumns`
 によりスキーマ進化が発生し、ストリームが一度再起動します（`UnknownFieldException` で
 一時的にジョブが失敗したように見えますが、Auto Loaderの正常な仕様で自動的に再起動して
-継続します）。
+継続します）。また `orders/reprocessed/` はサブフォルダのため、`bronze_orders.py` では
+`recursiveFileLookup=true` を明示しています。
 
 ### 検疫状況の確認方法
 
@@ -741,25 +869,23 @@ databricks bundle run structured_pipeline_job -t dev
 `@dp.expect_all_or_fail(GOLD_ORDER_GATE_RULES)` が `no_duplicate_order_id` 違反を検知し、
 パイプライン更新が失敗します。重複ファイルを取り除いてから再実行すると成功に戻ります。
 
-## テスト（構造化データパイプライン分）
-
-```
-pip install -e ".[dev]"
-pytest tests/unit/test_structured_quality_rules.py tests/unit/test_structured_pii.py \
-       tests/unit/test_structured_reprocessing_rules.py -v
-```
-
-いずれも pyspark / Databricks Runtime 不要（`structured_common/` の純粋関数と
-サンプルデータのみを検証する）。既存の `pytest tests/unit` にも含まれる。
-
 ## 既知の制約（構造化データパイプライン）
 
-- 本セクションの実装は、RAGパイプラインと同様に実際のワークスペースへの
-  `bundle deploy`/`bundle run` を一貫して行った上での動作確認は完了していません
-  （Preview機能である `dp.create_auto_cdc_flow` を含むため、特に `silver_customers`
-  の SCD2 出力形状は実際にデプロイして確認してください）。RAGパイプライン側で
-  判明した既存の制約（`__file__` が使えない、`input_file_name()` 非対応、
-  `environment_version` 指定必須 等）は本パイプラインにも同様に適用済みです。
+- `dp.create_auto_cdc_flow` を含むため、特に `silver_customers` の SCD2
+  出力形状（`__START_AT`/`__END_AT` 列名等）はPreview機能の仕様変更の影響を
+  受ける可能性があります。RAGパイプライン側で判明した既存の制約
+  （`__file__` が使えない、`input_file_name()` 非対応、`environment_version`
+  指定必須 等）は[共通事項](#lakeflow実装で共通して踏まえた技術的注意点)としてまとめ、
+  本パイプラインにも同様に適用済みです。
+- **Auto Loaderの取り込みパスの二重ネストに注意（実機で実際に遭遇）**: `bronze_customers.py` /
+  `bronze_orders.py` の `raw_customers_path` / `raw_orders_path`（pipeline.yml の
+  configuration）は既に `.../raw_structured_data/customers` /
+  `.../raw_structured_data/orders` というサブフォルダまで指しているため、変換コード側で
+  さらにサブパスを追加すると `.../orders/orders` のような二重ネストになり、
+  Auto Loaderが空ディレクトリと誤認して
+  `[CF_EMPTY_DIR_FOR_SCHEMA_INFERENCE] Cannot infer schema when the input path
+  ... is empty` で失敗する。実際に初回デプロイでこの不具合に遭遇し、
+  `.load(raw_volume_path)`（サブパスを付け足さない）に修正して解消した。
 - `gold_data_quality_summary` は検疫が0件の場合、0行になります
   （`gold_data_quality_summary.py` のコメント参照）。
 - `reprocess_quarantine.py` は検疫テーブル全体を driver へ `collect()` する実装です。
@@ -767,3 +893,63 @@ pytest tests/unit/test_structured_quality_rules.py tests/unit/test_structured_pi
   大規模な検疫件数が常態化する場合は Spark ネイティブな分散処理へ書き換えることを
   検討してください（そもそも検疫件数が常時大量に発生している場合、Silverの
   ルール設計か上流データ品質自体を見直すべきシグナルでもあります）。
+- **存在しない列を `F.col()` で参照すると NULL ではなく即エラーになる（実機で実際に遭遇）**:
+  `bronze_orders.py` で `payment_card_last4` / `payment_card_hash` /
+  `reprocessed_from_quarantine` を常に `F.col(...)` で参照するコードにしていたところ、
+  再処理ジョブを一度も実行していない初回デプロイ時点ではそれらの列がスキーマに
+  存在せず、`[UNRESOLVED_COLUMN.WITH_SUGGESTION]` で失敗した。Sparkでは
+  未知の列参照は「値がNULLになる」話ではなく「列名解決に失敗するエラー」である。
+  `raw.columns` に列が存在するかを事前に確認し、無ければ `F.lit(None)` に
+  差し替えることで解消した。
+- **Lakeflow Expectations はデコレートした関数の戻り値の列に対して評価される（実機で実際に遭遇）**:
+  `silver_customers.py` で「`CUSTOMER_RULES` による検証」と「PII匿名化に伴う列の改名
+  （`email`→`email_hash` 等）」を1つの関数内で同時に行ったところ、
+  `[UNRESOLVED_COLUMN.WITH_SUGGESTION] ... 'email' ... Did you mean ... email_hash`
+  で失敗した。Expectationsは関数の**入力**ではなく**戻り値**のDataFrameスキーマに対して
+  述語を評価するため、検証前提の列を関数内でrenameしてから返すと参照が壊れる。
+  「生の列を検証するビュー（`bronze_customers_validated`）」と「検証済みの列を
+  変換するビュー（`silver_customers_cleaned`）」の2段構成に分離して解消した。
+- **パイプライン関数内で `.count()` 等の即時アクションを呼ぶと不正な値になる（実機で実際に遭遇）**:
+  `gold_data_quality_summary.py` で `dp.read("silver_orders").count()` の結果を
+  `F.lit(...)` に埋め込んでいたところ、実際にデプロイすると件数が常に `0`
+  （`pass_rate_pct` は `NULL`）になった。Lakeflowはパイプライン関数をグラフ構築・解析の
+  過程で複数回呼び出すことがあり、まだ上流にデータが無い段階で `.count()` が
+  評価されてしまうと考えられる。`.agg(F.count(...))` と `crossJoin` による遅延評価の
+  DataFrame操作のみで組み立てることで解消した。
+- **Auto Loaderのスキーマ進化で追加された列は期待した型で推論されるとは限らない（実機で実際に遭遇）**:
+  再投入JSONに `"reprocessed_from_quarantine": true`（正しいJSON真偽値）を書いていたに
+  もかかわらず、`schemaEvolutionMode=addNewColumns` によってこの列が初めてスキーマへ
+  追加された際、Auto Loaderの推論結果が STRING 型になり、
+  `coalesce(reprocessed_from_quarantine, false)` が
+  `[DATATYPE_MISMATCH.DATA_DIFF_TYPES]`（STRINGとBOOLEANの混在）で失敗した。
+  スキーマ進化で後から追加された列は、元のJSON値が正しい型であっても推論結果が
+  期待通りの型になるとは限らないため、`F.col(...)` で取得した列は必ず明示的に
+  `.cast(...)` してから使うよう修正して解消した。
+- **検疫テーブルは「現在未解決の件数」ではなく「これまでに検出した違反の累積」である**:
+  `silver_orders_quarantine` は `bronze_orders`（Append Only、streaming）を
+  incrementalに読む streaming table のため、一度検疫された行は是正後も
+  テーブルから消えない（Bronzeの元の不正行自体が削除されないため）。実際に
+  `ORD1003`/`ORD1005` を是正・再投入した後も、`silver_orders_quarantine` には
+  是正前の元の行を含めて3行（`ORD1003`/`ORD1004`/`ORD1005`）が残り続け、
+  `silver_orders` 側には是正後の2件が新規行として追加される、という結果になった
+  （`gold_data_quality_summary`: `valid_count=9, quarantine_count=3, total_count=12,
+  pass_rate_pct=75.0`）。「この `order_id` は今も未解決か」を知りたい場合は、
+  本テーブル単独ではなく `quarantine_resolution_log`（`resolution_status`）と
+  JOINして判断する必要がある。
+- **`ALTER SCHEMA ... OWNER TO` はグループが存在しないとハードエラーになる（実機で実際に遭遇）**:
+  `governance/structured_governance.sql` の `OWNER TO \`data-engineering\`` は、
+  アカウントレベルに `data-engineering` グループを作成していないワークスペースで
+  実行すると `PRINCIPAL_DOES_NOT_EXIST` で失敗する。`IS_ACCOUNT_GROUP_MEMBER`
+  （Row Filter/Column Mask関数内で使用）が存在しないグループに対してfail-closed
+  （＝常にfalseを返しアクセス不可）に倒れるのとは異なり、`OWNER TO` は
+  存在しないプリンシパルに対して明示的にエラーになる。運用対象のワークスペースで
+  実際に使うグループ名に置き換えるか、事前にアカウントコンソールで
+  グループを作成しておくこと。
+- **メタストア管理者（ワークスペースadmin）はRow Filter/Column Maskをバイパスする**:
+  本リポジトリの検証は単一の管理者アカウントのみで行っているため、
+  Row Filter（`gold_daily_sales_by_region` の地域・ステータス制限、
+  `gold_customer_summary` の顧客可視性制限）やColumn Mask（`discount_rate`）が
+  SQL文としては正しく適用されていることはCLIから確認できたが、
+  「非管理者ユーザーから見て実際にフィルタ・マスクされるか」はDatabricksの仕様上
+  管理者には適用されないため、この環境単独では検証できていない。実運用では
+  管理者権限を持たない別ユーザーで実際にクエリして確認すること。

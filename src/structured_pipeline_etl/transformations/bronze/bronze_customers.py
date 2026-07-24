@@ -16,8 +16,6 @@
 from pyspark import pipelines as dp
 from pyspark.sql import functions as F
 
-RAW_CUSTOMERS_SUBPATH = "customers"
-
 
 @dp.table(
     name="bronze_customers",
@@ -32,6 +30,11 @@ RAW_CUSTOMERS_SUBPATH = "customers"
 @dp.expect("customer_id_present", "customer_id IS NOT NULL")
 @dp.expect("email_looks_like_email", "email IS NULL OR email RLIKE '.+@.+'")
 def bronze_customers():
+    # raw_customers_path は pipeline.yml の configuration で既に
+    # ".../raw_structured_data/customers" まで指しているため、ここでさらに
+    # "/customers" を追加しない（二重ネストになり
+    # `CF_EMPTY_DIR_FOR_SCHEMA_INFERENCE` で失敗する。実際にワークスペースへ
+    # デプロイして遭遇したバグのため、二度と踏まないようこの位置に明記しておく）。
     raw_volume_path = spark.conf.get("raw_customers_path")
 
     return (
@@ -43,7 +46,7 @@ def bronze_customers():
         # Silver/Goldは Lakeflow の宣言的変換（SQL/DataFrame）でスキーマを明示するため、
         # Auto Loader のスキーマ推論・進化はそもそも介在しない（=「許可しない」が自然に成立する）。
         .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .load(f"{raw_volume_path}/{RAW_CUSTOMERS_SUBPATH}")
+        .load(raw_volume_path)
         .select(
             F.col("customer_id"),
             F.col("name"),
